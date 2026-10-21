@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-21",
+  "version": "2.72.4",
+  "product_name": "Quo Vadis¿",
+  "change": "Remove the broad empty band above the footer in both panel styles",
+  "native_previews": [
+    "Classic-compact-Rack.png",
+    "Atrium-compact-Rack.png"
+  ],
+  "native_preview_sha256": "140499FCFFB108A8904B712E2509F26801E9F2C43AB9FD76837654BAFB4A7EF6",
+  "geometry": {
+    "rack_footprint": [
+      510,
+      380
+    ],
+    "footer_divider_before": 310,
+    "footer_divider_after": 286,
+    "screen_height_before": 111,
+    "screen_height_after": 103,
+    "pulse_height_before": 106,
+    "pulse_height_after": 82,
+    "stage_x_centres": [
+      290,
+      317.5,
+      345,
+      372.5,
+      400,
+      427.5,
+      455,
+      482.5
+    ],
+    "navigation_bottom": 273,
+    "encoder_bottom": 275,
+    "aux_bottom": 278
+  },
+  "implementation": "Shared vertical anchors for panel engraving and widgets; shorter pulse track and matching ticks; larger navigation/transport/CTRL/function targets; reflowed overview and stage graphs. Neutral silver/charcoal materials and patch IDs retained.",
+  "validation": [
+    "108 native Rack QA assertions passed, including all 24 stage drags, 31 button presence, exact stage bounds, non-overlapping hit targets, style menu and actual patch save/reopen",
+    "Horizontal stage-coordinate CSV is byte-identical to the prior 2.72.3 capture",
+    "Visually inspected both themes, overview, settings and stage graph at 200%, plus Classic at 100%",
+    "Production Windows package build passed; metadata, stable slugs, packaged docs and exported package hash verified",
+    "git diff --check passed"
+  ],
+  "widget_report": "compact-panel-qa-report.txt",
+  "coordinates": "compact-stage-button-alignment.csv",
+  "package": "exports/Quo-Vadis-2.72.4-private-preview-win-x64.vcvplugin",
+  "package_sha256": "84BD98E5710554FAD72A176F1894E8B77738F52CF7E8C2B3F5FD01575872B696",
+  "stripped_binary_sha256": "35F7AEF2808A3E0C8258F18B889B2AF6BBF94827C6AA36C2171A1BC00F8F7857",
+  "privacy": "Private repository preview; no public release or installation into the normal Rack profile",
+  "prior_dsp_validation": "Prior 2.72.1 soak remains recorded separately; no sequencing code changed in this layout update.",
+  "repository": "https://github.com/spliffrider/Qua-Vadis",
+  "release": "https://github.com/spliffrider/Qua-Vadis/releases/tag/v2.72.4",
+  "repackaging": "Repackaged with current Qua-Vadis repository documentation; build reported nothing to be done for all. Source/tests unchanged from the validated compact panel snapshot. New archive and stripped binary hashes recorded after packaging."
+}

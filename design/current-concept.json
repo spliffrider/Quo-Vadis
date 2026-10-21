@@ -1,0 +1,58 @@
+{
+  "updated_date": "2026-10-21",
+  "product_name": "Quo Vadis¿",
+  "repository": "https://github.com/spliffrider/Qua-Vadis",
+  "visibility": "private",
+  "version": "2.72.4",
+  "status": "Native compact panel implemented and checked in Rack",
+  "native_previews": [
+    "previews/2026-10-21/Classic-compact-Rack.png",
+    "previews/2026-10-21/Atrium-compact-Rack.png"
+  ],
+  "current_layout": "previews/2026-10-21/Classic-compact-Rack.png",
+  "selected_styles": [
+    {
+      "default": true,
+      "id": "classic",
+      "title": "Classic metal",
+      "notes": "Neutral brushed silver body/footer, textured charcoal upper panel, satin metal controls and restrained burgundy/blue-grey print accents."
+    },
+    {
+      "default": false,
+      "id": "atrium",
+      "title": "Atrium",
+      "notes": "Warm stone with Doric pulse columns, clear gate numbers above arches and laurels outside the title."
+    }
+  ],
+  "geometry": {
+    "panel_size": [
+      510,
+      380
+    ],
+    "display_height": 103,
+    "pulse_height": 82,
+    "stage_button_width": 26,
+    "footer_top": 286,
+    "stage_centres": [
+      290,
+      317.5,
+      345,
+      372.5,
+      400,
+      427.5,
+      455,
+      482.5
+    ]
+  },
+  "exact_stage_layout": {
+    "atrium": "previews/2026-10-21/Atrium-compact-stage-rows.png",
+    "coordinates": "previews/2026-10-21/compact-stage-button-alignment.csv",
+    "classic": "previews/2026-10-21/Classic-compact-stage-rows.png",
+    "authority": "Actual native Rack widget bounds, compared exactly."
+  },
+  "validation": "previews/2026-10-21/compact-panel-evidence.json",
+  "implementation": "Procedural native artwork with separate interactive Rack widgets. All 31 labelled buttons and 24 stage controls retained.",
+  "naming": "Visible name is Quo Vadis¿. The user-requested repository name is Qua-Vadis. Legacy plugin/model identifiers remain for patch compatibility.",
+  "history": "Previous design studies and repository history remain in the separate private legacy repository/local branch.",
+  "privacy": "Keep private until explicitly requested otherwise."
+}

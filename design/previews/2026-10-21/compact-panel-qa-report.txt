@@ -1,0 +1,109 @@
+
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS pitch, pulse and gate controls share stage centres
+PASS upward drag increases each stage control
+PASS downward drag returns each stage control
+PASS all 24 stage controls remain interactive
+PASS all 31 labelled pushbuttons remain on the panel
+PASS all compact-layout controls fit the panel with no overlapping hit targets
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS both buttons exist for each paired stage column
+PASS gate/function button left edge, centre and right edge match exactly
+PASS module context menu exposes Panel style
+PASS Panel style submenu opens
+PASS Classic menu item changes style
+PASS exact Classic button rows rendered directly from Rack widgets
+PASS whole Classic panel with narrowed right bank rendered directly
+PASS module context menu exposes Panel style
+PASS Panel style submenu opens
+PASS Atrium menu item changes style
+PASS exact Atrium button rows rendered directly from Rack widgets
+PASS whole Atrium panel with narrowed right bank rendered directly
+PASS module context menu exposes Panel style
+PASS Panel style submenu opens
+PASS module context menu exposes Panel style
+PASS Panel style submenu opens
+PASS PANEL UI QA COMPLETE
+PASS actual Rack save/reopen restores Atrium
+PASS PANEL REOPEN QA COMPLETE

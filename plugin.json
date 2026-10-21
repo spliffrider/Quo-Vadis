@@ -1,0 +1,30 @@
+{
+  "slug": "MetropolixLab",
+  "name": "Quo Vadis¿",
+  "version": "2.72.4",
+  "license": "proprietary",
+  "brand": "sensiburner",
+  "author": "sensiburner",
+  "modules": [
+    {
+      "slug": "Metropolix",
+      "name": "Quo Vadis¿",
+      "description": "Two-track performance sequencer with pulse counts, ratchets, accumulators, eight modulation lanes, and selectable Classic metal or Atrium panels.",
+      "tags": [
+        "Sequencer",
+        "Clock generator",
+        "Random",
+        "Sample and hold"
+      ]
+    },
+    {
+      "slug": "MX",
+      "name": "MX",
+      "description": "Eight gate/clock outputs for the adjacent Quo Vadis¿ sequencer. Configure with ALT + EXP.",
+      "tags": [
+        "Expander",
+        "Clock generator"
+      ]
+    }
+  ]
+}

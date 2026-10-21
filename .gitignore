@@ -1,0 +1,45 @@
+# Downloaded SDK/toolchain, dependencies, and generated files
+/.tools/
+/dep/
+/build/
+/dist/
+/tmp/
+/checkpoints/
+/exports/
+/docs/RESUME.md
+plugin.dll
+plugin.so
+plugin.dylib
+*.vcvplugin
+reference/*.pdf
+reference/*_pages.json
+
+# Local credentials, editor settings, and caches
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.vs/
+.vscode/
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+
+# Local design archive and retired branding are kept only in the legacy checkout.
+/reference/
+/design/mockups/
+/design/previews/2026-10-20/
+/design/previews/2026-10-21/*
+!/design/previews/2026-10-21/*compact*
+/res/*
+!/res/Cinzel.ttf
+!/res/Cinzel-OFL.txt
+!/res/README.txt
+/scripts/create-homage-wordmark.py
+/scripts/trace-reference-logo.py
+/scripts/save-ui-refinement-checkpoint.py
+/scripts/align-panel-mockups.py
+/Metropolix-Lab-Patches-in-Motion.mp4
+/Musical-variations-preview.wav

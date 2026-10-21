@@ -1,0 +1,1039 @@
+#pragma once
+#include "plugin.hpp"
+#include "Sequencer.hpp"
+#include "Presets.hpp"
+#include "Chains.hpp"
+#include "Workflows.hpp"
+#include "SetupTiming.hpp"
+#include "Pickup.hpp"
+#include "MidiLogic.hpp"
+#include "MxLogic.hpp"
+#include "MxProtocol.hpp"
+#include "ModDisplay.hpp"
+#include <atomic>
+#include <mutex>
+#include <deque>
+
+struct ClockOffsetQuantity : ParamQuantity {
+    int divisionParam=-1;
+    float getMaxValue() override {return module && divisionParam>=0?float(metro::ClockOutput::division(int(std::round(module->params[divisionParam].getValue())))-1):255.f;}
+    float getValue() override {return metro::clamp(ParamQuantity::getValue(),0.f,getMaxValue());}
+};
+struct ClockDivisionQuantity : ParamQuantity {
+    std::string getDisplayValueString() override {return "/"+ParamQuantity::getDisplayValueString();}
+    void setDisplayValueString(std::string s) override {if(!s.empty() && s[0]=='/')s.erase(0,1);ParamQuantity::setDisplayValueString(s);}
+};
+struct ModVoltageQuantity : ParamQuantity {
+    int typeParam = -1;
+    int destinationParam = -1;
+    metro::ModDestination destination()const{return module && destinationParam>=0?static_cast<metro::ModDestination>(int(module->params[destinationParam].getValue())):metro::ModNone;}
+    metro::ModType type() const {auto saved=module && typeParam>=0?static_cast<metro::ModType>(int(module->params[typeParam].getValue())):metro::ModBipolar;return metro::effectiveModType(saved,destination());}
+    bool gate() const {return type()==metro::ModGate;}
+    float getMinValue() override {return type()==metro::ModBipolar?-5.f:0.f;}
+    float getValue() override {
+        // Keep numeric editing and drag origins aligned with the effective
+        // voltage when a bipolar lane changes to a positive-only CV type.
+        return metro::clamp(ParamQuantity::getValue(), getMinValue(), 5.f);
+    }
+    float getDisplayValue()override{return gate()?getValue():metro::modDisplayValue(getValue(),destination());}
+    void setDisplayValue(float v)override{setValue(gate()?v:v/metro::modDisplay(destination()).multiplier);}
+    std::string getDisplayValueString() override {return gate()?(getValue()>=1.5f?"On":"Off"):metro::modDisplayText(getValue(),destination(),false);}
+    std::string getUnit() override {return gate()?"":metro::modDisplay(destination()).unit;}
+    void setDisplayValueString(std::string s) override {if(gate() && (s=="On" || s=="on"))setValue(5);else if(gate() && (s=="Off" || s=="off"))setValue(0);else ParamQuantity::setDisplayValueString(s);}
+};
+struct ModTypeQuantity : SwitchQuantity {
+    int destinationParam=-1;
+    metro::ModDestination destination()const{return module && destinationParam>=0?static_cast<metro::ModDestination>(int(module->params[destinationParam].getValue())):metro::ModNone;}
+    bool forced()const{return destination()>metro::ModNone && destination()<metro::ModDestinationCount;}
+    metro::ModType type()const{return metro::effectiveModType(module?static_cast<metro::ModType>(int(module->params[paramId].getValue())):metro::ModBipolar,destination());}
+    std::string getDisplayValueString()override{return forced()?std::string(type()==metro::ModGate?"Gate Toggle":"Bipolar ±")+" (Internal destination)":SwitchQuantity::getDisplayValueString();}
+    std::string getDescription()override{return forced()?"The internal destination fixes this lane's CV type. Clear that destination to edit the type; the saved unassigned choice is preserved.":SwitchQuantity::getDescription();}
+    void setValue(float value)override{if(!forced())SwitchQuantity::setValue(value);}
+};
+struct RoutingAssignmentQuantity : SwitchQuantity {
+    int destinationParam=-1;
+    bool global() const {return module && destinationParam>=0 && metro::modGlobalDestination(static_cast<metro::ModDestination>(int(module->params[destinationParam].getValue())));}
+    std::string getDisplayValueString() override {return global()?"Global":SwitchQuantity::getDisplayValueString();}
+    std::string getDescription() override {return global()?"Global destination. The saved track assignment becomes active again for a track destination.":SwitchQuantity::getDescription();}
+    void setValue(float value) override {if(!global())SwitchQuantity::setValue(value);}
+};
+struct TrackCvQuantity : ParamQuantity {
+    int typeParam=-1;
+    int velocityParam=-1;
+    metro::TrackCvType type() const {auto value=module && typeParam>=0?static_cast<metro::TrackCvType>(int(module->params[typeParam].getValue())):metro::BipolarCv;return value==metro::BipolarCv && module && velocityParam>=0 && module->params[velocityParam].getValue()==3?metro::UnipolarCv:value;}
+    float getMinValue() override {return type()==metro::BipolarCv?-5.f:0.f;}
+    float getValue() override {return metro::trackCvVoltage(ParamQuantity::getValue(),type());}
+    void setValue(float v) override {ParamQuantity::setValue(type()==metro::GateCv?metro::trackCvVoltage(v,type()):v);}
+    std::string getDisplayValueString() override {return type()==metro::GateCv?(getValue()>=1.5f?"On":"Off"):ParamQuantity::getDisplayValueString();}
+    std::string getUnit() override {return type()==metro::GateCv?"":unit;}
+    void setDisplayValueString(std::string s) override {if(s=="On" || s=="on")setValue(5);else if(s=="Off" || s=="off")setValue(0);else ParamQuantity::setDisplayValueString(s);}
+};
+struct TrackCvTypeQuantity : SwitchQuantity {
+    int velocityParam=-1;
+    bool forced()const{return module && velocityParam>=0 && module->params[velocityParam].getValue()==3 && module->params[paramId].getValue()==metro::BipolarCv;}
+    std::string getDisplayValueString()override{return forced()?"Unipolar + (Velocity CV)":SwitchQuantity::getDisplayValueString();}
+    std::string getDescription()override{return forced()?"CV supplies velocity, so its sounding range is 0–5 V. The saved Bipolar choice returns when another velocity source is selected.":SwitchQuantity::getDescription();}
+};
+
+struct LoopyPulseQuantity : ParamQuantity {
+    std::string getDisplayValueString() override {return getValue()<.5f?"Auto":ParamQuantity::getDisplayValueString();}
+    void setDisplayValueString(std::string s) override {if(s=="Auto" || s=="auto")setValue(0);else ParamQuantity::setDisplayValueString(s);}
+};
+struct SlideAmountQuantity : ParamQuantity {
+    int typeParam=-1;
+    std::string getUnit() override {return module && typeParam>=0 && module->params[typeParam].getValue()==metro::TempoSlide?"% of a pulse":"%";}
+    std::string getDescription() override {
+        int type=module && typeParam>=0?int(module->params[typeParam].getValue()):0;
+        if(type==metro::TempoSlide)return "Glide into marked stages over this fraction of a track pulse.";
+        return std::string(type==metro::AcidSlide?"Hold marked stages and glide into the following stage. ":"Glide into marked stages. ")+
+            string::f("Slew time: %.2f ms per octave, independent of tempo.",metro::analogSlideTime(getValue()*.01f)*1000);
+    }
+};
+struct GateLengthQuantity : ParamQuantity {
+    std::string getDisplayValueString() override { return getValue()>=100?"Hold":ParamQuantity::getDisplayValueString(); }
+    std::string getUnit() override { return getValue()>=100?"":unit; }
+    void setDisplayValueString(std::string s) override { if(s=="Hold" || s=="hold")setValue(100);else ParamQuantity::setDisplayValueString(s); }
+};
+struct GateOverrideQuantity : ParamQuantity {
+    std::string getDisplayValueString() override {
+        int v=int(std::round(getValue()));return v<0?"-- (track)":v==0?"Rest":std::to_string(v)+"%";
+    }
+    void setDisplayValueString(std::string s) override {
+        if(s=="--" || s=="track")setValue(-1);
+        else if(s=="Rest" || s=="rest")setValue(0);
+        else if(s=="Hold" || s=="hold")setValue(100);
+        else ParamQuantity::setDisplayValueString(s);
+    }
+};
+struct PitchOverrideQuantity : ParamQuantity {
+    int scaleParam=-1;
+    int track=0;
+    metro::Scale scale() const;
+    void setValue(float v) override {
+        const auto notes=scale();
+        ParamQuantity::setValue(v<-.5f?-1.f:float(metro::clamp(metro::degreeToSemitone(metro::nearestDegree(metro::clamp(v,0.f,60.f),notes),notes),0,60)));
+    }
+    std::string getDisplayValueString() override {
+        if(getValue()<0)return "-- (slider)";
+        static const char* names[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+        const auto scaleNotes=scale();
+        int note=metro::degreeToSemitone(metro::nearestDegree(getValue(),scaleNotes),scaleNotes);
+        int pitchClass=metro::modulo(note,12);
+        return std::string(names[pitchClass])+std::to_string((note-pitchClass)/12);
+    }
+    void setDisplayValueString(std::string s) override {
+        if(s=="--" || s=="slider"){setValue(-1);return;}
+        static const char* names[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+        for(int n=0;n<12;++n)for(int octave=0;octave<=5;++octave)
+            if(s==std::string(names[n])+std::to_string(octave)){setValue(float(n+12*octave));return;}
+        try { setValue(std::stof(s)); } catch(...) {}
+    }
+};
+
+struct MetropolixMidiOutput : midi::Output {
+    std::atomic<unsigned> usedChannels{0};
+    std::vector<int> getChannels() override {return {-1};}
+    void setDeviceId(int id) override {
+        if(id!=getDeviceId()) {
+            unsigned mask=usedChannels.exchange(0);midi::Message message;
+            for(int ch=0;ch<16;++ch)if(mask & (1u<<ch)) {
+                message.bytes[0]=uint8_t(0xb0+ch);message.bytes[1]=123;message.bytes[2]=0;
+                sendMessage(message);
+            }
+        }
+        midi::Output::setDeviceId(id);
+    }
+};
+struct MetropolixMidiInput : midi::InputQueue {
+    std::vector<int> getChannels() override {return {-1};}
+};
+
+struct Metropolix : Module {
+    enum ParamIds {
+        TEMPO, RUN, RESET, ROOT, SCALE, RANGE,
+        PITCH = 6, PULSES = PITCH + 8, GATES = PULSES + 8,
+        TRACK = GATES + 8,
+        TRACK_STRIDE = 9 + 6 * 8,
+        LEGACY_NUM_PARAMS = TRACK + 2 * TRACK_STRIDE,
+        EXTRA_TRACK = LEGACY_NUM_PARAMS,
+        EXTRA_STRIDE = 6,
+        ACCUM_OPTIONS = EXTRA_TRACK + 2 * EXTRA_STRIDE,
+        ACCUM_OPTIONS_STRIDE = 3,
+        STAGE_OPTIONS = ACCUM_OPTIONS + 2 * ACCUM_OPTIONS_STRIDE,
+        MOD_LANE = STAGE_OPTIONS + 2 * 8 * 2,
+        MOD_STRIDE = 26,
+        OUTPUT_SOURCE_A = MOD_LANE + 8 * MOD_STRIDE,
+        OUTPUT_SOURCE_B,
+        AUX_PARAMS = OUTPUT_SOURCE_B + 1,
+        AUX_STRIDE = 3,
+        ACCUM_MODE = AUX_PARAMS + 3 * AUX_STRIDE,
+        CTRL_PARAMS = ACCUM_MODE + 2,
+        CTRL_STRIDE = 3,
+        TOTAL_PULSES = CTRL_PARAMS + 2 * CTRL_STRIDE,
+        QUEUE_PULSES, LOAD_DELAY, LOAD_PITCH, LOAD_SWITCHES, LOAD_CTRL, LOAD_AUX,
+        RUN_MODE,
+        SWING_1, SWING_2,
+        GATE_SCALE_1, GATE_SCALE_2,
+        STAGE_OVERRIDES,
+        LOOPY_PULSES = STAGE_OVERRIDES + 32, LOOPY_TARGET,
+        SCALE_LOCK, USER_SCALES, SCALE_NOTE = USER_SCALES + metro::UserScaleCount*2,
+        SCALE_SHORTCUTS, SLIDE_TYPE_1 = SCALE_SHORTCUTS + 16, SLIDE_TYPE_2,
+        CV_TYPE_1, CV_TYPE_2, CV_RAMPS, CLOCK_OUT_DIV = CV_RAMPS + 16, CLOCK_OUT_OFFSET,
+        OUTPUT_TRACK_OPTIONS, OUTPUT_TRACK_STRIDE=3,
+        TRACK_BEHAVIOR=OUTPUT_TRACK_OPTIONS+2*OUTPUT_TRACK_STRIDE, TRACK_BEHAVIOR_STRIDE=3, FORMAT19_NUM_PARAMS=TRACK_BEHAVIOR+2*TRACK_BEHAVIOR_STRIDE,
+        CLOCK_SOURCE=FORMAT19_NUM_PARAMS, CLOCK_RUNNING_ONLY, RESET_INPUT_MODE, TRACK_GLOBAL_RESET_1, TRACK_GLOBAL_RESET_2, BOTTOM_PITCH, TUNER_OCTAVE, TUNER_GATE, FORMAT20_NUM_PARAMS, INIT_PRESET=FORMAT20_NUM_PARAMS, FORMAT21_NUM_PARAMS, ENC_CONFIRM=FORMAT21_NUM_PARAMS, SHOW_POSITION, BUTTON_LEVEL, SLIDER_LEVEL, SCREEN_LEVEL, CV_OUT_DELAY, EXT_CLOCK_DIV, RUN_ON_BOOT, FORMAT22_NUM_PARAMS,
+        MIDI_TRACK=FORMAT22_NUM_PARAMS, MIDI_TRACK_STRIDE=5,
+        MIDI_MOD=MIDI_TRACK+2*MIDI_TRACK_STRIDE, MIDI_MOD_STRIDE=2,
+        MIDI_CLOCK_OUT=MIDI_MOD+8*MIDI_MOD_STRIDE, MIDI_TRANSPORT, MIDI_ROOT_CHANNEL, MIDI_PC_CHANNEL, MIDI_ZERO_NOTE, FORMAT24_NUM_PARAMS, MX_MODE=FORMAT24_NUM_PARAMS, MX_TRACK, MX_LANE, FORMAT31_NUM_PARAMS, ORDER_SHORTCUTS=FORMAT31_NUM_PARAMS, FORMAT32_NUM_PARAMS=ORDER_SHORTCUTS+16, MOD_GROUP_MUTE=FORMAT32_NUM_PARAMS, FORMAT34_NUM_PARAMS, MIDI_MX_CHANNEL=FORMAT34_NUM_PARAMS, MIDI_MX_OUTPUT, NUM_PARAMS
+    };
+    enum TrackParams { LENGTH, OFFSET, DIVISION, ORDER, TRANSPOSE, GATE_LENGTH, SLIDE_TIME, ACCUM_LIMIT, MUTE };
+    enum StageParams { RATCHETS, PROBABILITY, ACCUMULATION, SLIDE, SKIP, CV, PITCH_OVERRIDE, GATE_OVERRIDE };
+    enum ExtraTrackParams { REVERSED, PULSE_DIV, PULSE_LIMIT, GATE_STRETCH, RATCHET_MODE, ACCUM_AUTO_RESET };
+    enum AccumOptions { NEGATIVE_LIMIT, BIPOLAR, ACCUM_ORDER };
+    enum StageOptions { PROB_TARGET, ACCUM_TRIGGER };
+    enum ModParams { MOD_LENGTH, MOD_STAGE_OFFSET, MOD_DIVISION, MOD_ORDER, MOD_REVERSED, MOD_PULSE_LIMIT,
+        MOD_TYPE, MOD_DESTINATION, MOD_ASSIGNMENT, MOD_MUTE, MOD_VALUE = 10, MOD_RAMP = 18 };
+    enum AuxParams { AUX_AMOUNT, AUX_DESTINATION, AUX_ASSIGNMENT };
+    enum CtrlParams { CTRL_VALUE, CTRL_DESTINATION, CTRL_ASSIGNMENT };
+    enum OutputTrackOptions {VELOCITY_SOURCE, SLIDER_OCTAVES, SLIDER_DIRECTION};
+    enum TrackBehavior {PULSE_SOURCE, GATE_SOURCE, REST_PITCH};
+    enum MidiTrackParams {MIDI_CHANNEL, MIDI_CV_CC, MIDI_SLIDE_CC, MIDI_AMOUNT_CC, MIDI_AMOUNT_ALWAYS};
+    enum MidiModParams {MIDI_MOD_CHANNEL, MIDI_MOD_CC};
+    enum InputIds { CLOCK_IN, RESET_IN, AUX_X_IN, AUX_Y_IN, AUX_Z_IN, NUM_INPUTS };
+    enum OutputIds { PITCH_1, GATE_1, PITCH_2, GATE_2, CLOCK_OUT, A_OUT, B_OUT, NUM_OUTPUTS };
+    enum LightIds { POSITION_1, POSITION_2 = POSITION_1 + 8, NUM_LIGHTS = POSITION_2 + 8 };
+    static int trackParam(int t, int p) { return TRACK + t * TRACK_STRIDE + p; }
+    static int stageParam(int t, int stage, int row) { return row<6?trackParam(t,9+row*8+stage):STAGE_OVERRIDES+t*16+(row-PITCH_OVERRIDE)*8+stage; }
+    static int gateScaleParam(int t) { return GATE_SCALE_1+t; }
+    static int extraParam(int t, int p) { return EXTRA_TRACK + t * EXTRA_STRIDE + p; }
+    static int accumParam(int t, int p) { return ACCUM_OPTIONS + t * ACCUM_OPTIONS_STRIDE + p; }
+    static int stageOption(int t, int s, int p) { return STAGE_OPTIONS + t * 16 + p * 8 + s; }
+    static int modParam(int lane, int p) { return MOD_LANE + lane * MOD_STRIDE + p; }
+    static int auxParam(int input, int p) { return AUX_PARAMS + input * AUX_STRIDE + p; }
+    static int accumModeParam(int t) { return ACCUM_MODE + t; }
+    static int ctrlParam(int knob, int p) { return CTRL_PARAMS + knob * CTRL_STRIDE + p; }
+    static int swingParam(int track) { return SWING_1 + track; }
+    static int slideTypeParam(int track) {return SLIDE_TYPE_1+track;}
+    static int cvTypeParam(int track) {return CV_TYPE_1+track;}
+    static int cvRampParam(int track,int stage) {return CV_RAMPS+track*8+stage;}
+    static int outputTrackParam(int track,int field) {return OUTPUT_TRACK_OPTIONS+track*OUTPUT_TRACK_STRIDE+field;}
+    static int trackBehaviorParam(int track,int field) {return TRACK_BEHAVIOR+track*TRACK_BEHAVIOR_STRIDE+field;}
+    static int midiTrackParam(int track,int field){return MIDI_TRACK+track*MIDI_TRACK_STRIDE+field;}
+    static int midiModParam(int lane,int field){return MIDI_MOD+lane*MIDI_MOD_STRIDE+field;}
+    metro::TrackCvType effectiveCvType(int t){auto type=static_cast<metro::TrackCvType>(integer(cvTypeParam(t)));return type==metro::BipolarCv && integer(outputTrackParam(t,VELOCITY_SOURCE))==3?metro::UnipolarCv:type;}
+    metro::ModType effectiveModType(int lane){return metro::effectiveModType(static_cast<metro::ModType>(integer(modParam(lane,MOD_TYPE))),static_cast<metro::ModDestination>(integer(modParam(lane,MOD_DESTINATION))));}
+    float effectiveModVoltage(int lane,float value){auto type=effectiveModType(lane);if(type==metro::ModGate)return value>=1.5f?5.f:0.f;return metro::modClamp(value,type==metro::ModUnipolar?0.f:-5.f,5.f);}
+    static std::vector<std::string> midiChannels(){std::vector<std::string> names{"--"};for(int n=1;n<=16;++n)names.push_back(std::to_string(n));return names;}
+    static std::vector<std::string> midiCCs(){std::vector<std::string> names{"--"};for(int n=0;n<128;++n)names.push_back(std::to_string(n));return names;}
+    static std::vector<std::string> gateSourceLabels(){return {"Switch","Single","Single + Rest","Multi","Multi + Rest","Hold","Hold + Rest"};}
+    static int userScaleParam(int slot,bool root=false) {return USER_SCALES+metro::clamp(slot,0,99)*2+int(root);}
+    static int scaleShortcutParam(int slot,bool root=false) {return SCALE_SHORTCUTS+metro::clamp(slot,0,7)*2+int(root);}
+    static int orderShortcutParam(int slot,bool direction=false) {return ORDER_SHORTCUTS+metro::clamp(slot,0,7)*2+int(direction);}
+    static std::array<int,2> orderParams(bool mod,int target) {
+        return mod?std::array<int,2>{{modParam(target,MOD_ORDER),modParam(target,MOD_REVERSED)}}:
+            std::array<int,2>{{trackParam(target,ORDER),extraParam(target,REVERSED)}};
+    }
+    bool orderShortcut(int slot,bool save,bool mod,int target) {
+        if(slot<0 || slot>=8 || target<0 || target>=(mod?8:2))return false;
+        auto ids=orderParams(mod,target);
+        if(!save && (ctrlOwner(ids[0])>=0 || ctrlOwner(ids[1])>=0))return false;
+        for(int field=0;field<2;++field) {
+            int stored=orderShortcutParam(slot,field!=0);
+            params[save?stored:ids[field]].setValue(float(integer(save?ids[field]:stored)));
+        }
+        return true;
+    }
+    static std::vector<std::string> ctrlDestinations() {
+        return {"None", "Accum Mode", "Accum Polar", "Tempo", "Clock Div", "Direction",
+            "Gate Length", "Octave", "Pitch Offset", "Pitch Post", "Pitch Pre", "Play Order",
+            "Probability", "Pulse Count", "Pulse Div", "Pulses Len", "Ratchet", "Root",
+            "Skip Invert", "Slide Amount", "Slider Invert", "Stages Len", "Stages Offset", "Track Out Swap", "Swing", "Scale (User)", "Velocity", "Slider Range", "Gate Scale", "Accum Dir"};
+    }
+    static int ctrlBaseParam(metro::CtrlDestination d, int t) {
+        switch(d) {
+            case metro::CtrlAccumMode: return accumModeParam(t);
+            case metro::CtrlAccumPolar: return accumParam(t,BIPOLAR);
+            case metro::CtrlTempo: return TEMPO;
+            case metro::CtrlClockDiv: return trackParam(t,DIVISION);
+            case metro::CtrlGateLength: return trackParam(t,GATE_LENGTH);
+            case metro::CtrlOrder: return trackParam(t,ORDER);
+            case metro::CtrlPulseDiv: return extraParam(t,PULSE_DIV);
+            case metro::CtrlPulsesLength: return extraParam(t,PULSE_LIMIT);
+            case metro::CtrlSlideAmount: return trackParam(t,SLIDE_TIME);
+            case metro::CtrlStagesLength: return trackParam(t,LENGTH);
+            case metro::CtrlStagesOffset: return trackParam(t,OFFSET);
+            case metro::CtrlSwing: return swingParam(t);
+            case metro::CtrlSliderRange: return outputTrackParam(t,SLIDER_OCTAVES);
+            case metro::CtrlGateScale: return gateScaleParam(t);
+            default: return -1;
+        }
+    }
+    int ctrlOwner(int id) {
+        if(id<0) return -1;
+        for(int k=1;k>=0;--k) {
+            auto d=static_cast<metro::CtrlDestination>(static_cast<int>(std::round(params[ctrlParam(k,CTRL_DESTINATION)].getValue())));
+            int assignment=static_cast<int>(std::round(params[ctrlParam(k,CTRL_ASSIGNMENT)].getValue()));
+            for(int t=0;t<2;++t)
+                if((assignment==2 || assignment==t || d==metro::CtrlTempo) && ctrlBaseParam(d,t)==id) return k;
+        }
+        return -1;
+    }
+    int uiSliderOctaves(int t) {
+        int range=integer(outputTrackParam(t,SLIDER_OCTAVES));
+        return metro::clamp(range?range:integer(RANGE),1,4);
+    }
+    float uiSliderPosition(int t,int stage,bool physical=false) {
+        bool inverted=integer(outputTrackParam(t,SLIDER_DIRECTION));
+        float ctrl=0;
+        for(int k=0;k<2;++k)if(integer(ctrlParam(k,CTRL_DESTINATION))==metro::CtrlSliderInvert &&
+            (integer(ctrlParam(k,CTRL_ASSIGNMENT))==2 || integer(ctrlParam(k,CTRL_ASSIGNMENT))==t))
+            ctrl=panelValue(ctrlParam(k,CTRL_VALUE));
+        int id=PITCH+metro::clamp(stage,0,7);
+        float value=physical?params[id].getValue():panelValue(id);
+        return inverted!=(ctrl>0)?1.f-value:value;
+    }
+    static int accumScreenParam(int t, int field) {
+        const int ids[] = {trackParam(t, ACCUM_LIMIT), accumParam(t, NEGATIVE_LIMIT),
+            accumModeParam(t), accumParam(t, ACCUM_ORDER), accumParam(t, BIPOLAR), extraParam(t, ACCUM_AUTO_RESET)};
+        return ids[metro::clamp(field, 0, 5)];
+    }
+    static std::vector<std::string> modDestinations() {
+        return {"None", "Octave", "Pitch Pre", "Pitch Post", "Pitch Offset", "Gate Length", "Probability", "Ratchet", "Mute", "Swing", "Scale (User)", "Velocity", "Track Out Swap", "Accumulate", "Accum Rev", "Accum Invert", "Accum Mode", "Accum Polar", "Accum Reset", "BPM (INT)", "Clock In Div", "Direction", "Gate Scale", "Loopy", "Loopy Pulses", "Loopy Offset", "Play Order", "Pulse Count", "Pulse Div", "Pulses Len", "Reset", "Root", "Skip Invert", "Slide", "Slide Amount", "Slider Invert", "Slider Range", "Stages Len", "Stages Offset"};
+    }
+    static std::vector<std::string> outputSources() {
+        std::vector<std::string> names;for(int source=0;source<metro::OutputSourceCount;++source)names.push_back(metro::outputLabel(source));return names;
+    }
+    static std::vector<std::string> orderLabels() {
+        return {"Linear", "Ping Pong", "Pendulum", "Odd / Even", "Jump by 2", "Jump by 3", "Jump by 4", "Jump by 5",
+            "Hopscotch", "Arp 3 Shift -1", "Arp 4 Shift -2", "Arp 4 Shift -1", "Converge", "Diverge",
+            "Growing", "Shrinking", "Pedal Point", "Brownian", "Shuffle", "Quasi Random", "Random"};
+    }
+
+    metro::Sequencer sequencer;
+    dsp::SchmittTrigger clockTrigger, resetTrigger, resetButton;
+    int controlCounter = 0;
+    std::atomic<int> selectedTrack{0}, selectedStage{0}, selectedRow{0};
+    std::atomic<bool> expanded{false}, externalClock{false};
+    enum PanelStyle { CLASSIC_METAL, ATRIUM };
+    // Presentation state belongs to the Rack patch, never a sequencer preset.
+    std::atomic<int> panelStyle{CLASSIC_METAL};
+    std::atomic<bool> modEditor{false}, performanceEditor{false};
+    void openDesktopView(int view) {
+        performanceEditor.store(view==2);modEditor.store(view==1);
+        uiMod.store(view==1);expanded.store(true);
+    }
+    std::atomic<int> selectedLane{0};
+    std::atomic<int> selectedAux{0};
+    std::atomic<int> selectedCtrl{0};
+    std::atomic<float> auxVoltage[3];
+    std::atomic<unsigned> modSkipMask{0};
+    // Presentation only: the hardware panel and optional grids share all
+    // existing Rack parameters. No engine parameter IDs change here.
+    enum SetupItem { SetupClock, SetupClockMode, SetupRun, SetupReset, SetupBottom,
+        SetupTuner, SetupPulses, SetupInit, SetupChains, SetupMidiClock,
+        SetupMidiTransport, SetupMidiRoot, SetupMidiPc, SetupMidiMxChannel, SetupMidiMxOutput, SetupBackup,
+        SetupPresets, SetupUi, SetupVersion, SetupItemCount };
+    enum UiPage { HOME, BPM_PAGE, SCALE_PAGE, ORDER_PAGE, LENGTH_PAGE, DIV_PAGE,
+        SLIDE_PAGE, GATE_PAGE, STAGE_PAGE, A_PAGE, B_PAGE, SETUP_PAGE, UNAVAILABLE_PAGE, AUX_PAGE, ACCUM_PAGE, CTRL_PAGE,
+        LOAD_PAGE, SAVE_PAGE, PRESET_SETUP_PAGE, CHAIN_PAGE, SWING_PAGE, LOOPY_PAGE, CV_TYPE_PAGE, CLOCK_OUT_PAGE, TRACK_MENU_PAGE, GLOBAL_SETUP_PAGE, TUNER_PAGE, UI_SETUP_PAGE, MOD_ASSIGN_PAGE, MOD_MENU_PAGE, MIDI_SETUP_PAGE, MX_SETUP_PAGE, BACKUP_PAGE, BACKUP_PRESET_PAGE, FACTORY_PAGE, FACTORY_CONFIRM_PAGE };
+    std::atomic<int> uiPage{HOME}, uiField{0};
+    std::atomic<int> outputDraft[2]{{-1},{-1}}; // Unconfirmed choices never reach DSP or saved patches.
+    std::atomic<float> outputDraftBase[2]{{0.f},{0.f}}; // Applied raw source when each preview began.
+    std::vector<float> workflowBaseline, workflowClipboard;
+    int workflowClipKind=0, workflowClipTag=-1, workflowStageSource=-1;
+    bool workflowCopyUsed=false, workflowLaneCopy=false, workflowEditUsed=false;
+    unsigned workflowStageHeld=0;
+    std::string workflowMessage;double workflowUntil=0;
+    unsigned scaleClipboardMask=0;int scaleClipboardRoot=0;
+    bool scaleCopyGesture=false;
+    metro::RandomSource workflowRandomSource;
+    void clearWorkflows(){workflowBaseline.clear();workflowClipboard.clear();workflowClipKind=0;workflowClipTag=-1;workflowStageHeld=0;workflowCopyUsed=workflowLaneCopy=workflowEditUsed=false;workflowMessage.clear();workflowUntil=0;scaleClipboardMask=0;scaleClipboardRoot=0;scaleCopyGesture=false;}
+    int uiDraftParam=-1;float uiDraftValue=0,uiDraftBase=0,uiDraftOrigin=0;
+    std::vector<int> uiDraftIds;std::vector<float> uiDraftBefore,uiDraftRawBefore;
+    std::vector<int> uiDraftContextIds;std::vector<float> uiDraftContextBefore;
+    std::atomic<std::uint64_t> uiDraftSerial{0};
+    bool uiDraftAlt=false;
+    std::atomic<int> uiSetupCursor{0},modMenuCursor{0},midiSetupCursor{0};
+    std::atomic<int> backupCursor{0};
+    std::atomic<int> backupPresetCursor{0};
+    std::atomic<int> factoryCursor{0};
+    int factoryConfirmCursor=0; // UI only, never saved or restored armed.
+    std::string factoryNotice;double factoryNoticeUntil=0; // UI only.
+    std::string backupNotice;double backupNoticeUntil=0; // UI thread only.
+    metro::MxLogic mx;std::uint64_t mxResetSerial=0;std::atomic<bool> mxConnected{false};
+    metro::ExternalDivider externalDivider;metro::OutputDelay<NUM_OUTPUTS> outputDelay;
+    void cancelDraft(){uiDraftParam=-1;uiDraftIds.clear();uiDraftBefore.clear();uiDraftRawBefore.clear();uiDraftContextIds.clear();uiDraftContextBefore.clear();++uiDraftSerial;}
+    float uiValue(int id){
+        if(id==uiDraftParam)return uiDraftValue;
+        for(size_t i=0;i<uiDraftIds.size();++i)if(uiDraftIds[i]==id){
+            if(auto* pitch=dynamic_cast<PitchOverrideQuantity*>(getParamQuantity(uiDraftParam))){auto scale=pitch->scale();int off=metro::nearestDegree(0,scale)-1;auto degree=[&](float v){return v<0?off:metro::nearestDegree(v,scale);};int d=metro::clamp(degree(uiDraftBefore[i])+degree(uiDraftValue)-degree(uiDraftOrigin),off,metro::nearestDegree(60,scale));return d==off?-1.f:float(metro::clamp(metro::degreeToSemitone(d,scale),0,60));}
+            return metro::clamp(uiDraftBefore[i]+uiDraftValue-uiDraftOrigin,getParamQuantity(id)->getMinValue(),getParamQuantity(id)->getMaxValue());
+        }
+        return panelValue(id);
+    }
+    std::atomic<int> trackMenuCursor{0}, setupCursor{0}, globalCursor{0};
+    std::atomic<bool> setupDirectChild{false};
+    std::atomic<bool> presetSetupEditing{false}; // Transient; saved uiField IDs retain their meaning.
+    std::atomic<bool> tunerActive{false}, transportRunning{false};
+    bool transportRestoreHold=false; // Audio thread; restore writes under engine exclusion.
+    std::atomic<unsigned> heldTrackReset{0};
+    std::atomic<bool> resetFromUi{false};
+    std::atomic<int> uiHome{0};
+    std::atomic<int> pitchPreviewStage{-1};
+    std::atomic<std::uint64_t> uiRestoreSerial{0}; // Invalidate pending UI input on reset/restore.
+    std::atomic<double> pitchPreviewUntil{0}; // Transient UI feedback, never serialized.
+    void clearPitchPreview(){pitchPreviewStage.store(-1);pitchPreviewUntil.store(0);}
+    bool pitchPreviewActive() const {
+        int stage=pitchPreviewStage.load();
+        return stage>=0 && stage<8 && rack::system::getTime()<pitchPreviewUntil.load() && !(uiPage.load()==HOME && uiHome.load()==1);
+    }
+    void previewPitchEdit(int id,float before,float after) {
+        if(id<PITCH || id>=PITCH+8 || before==after || !std::isfinite(after))return;
+        if(uiPage.load()==HOME && uiHome.load()==1){clearPitchPreview();return;}
+        pitchPreviewStage.store(id-PITCH);pitchPreviewUntil.store(rack::system::getTime()+1.5);
+    }
+    std::atomic<bool> uiStageDetail{false};
+    std::atomic<bool> uiMod{false}, uiEdit{false}, uiAlt{false};
+    std::atomic<bool> uiChooseFunction{false};
+    std::atomic<bool> scaleEditing{false},scaleShortcutHeld{false},scaleShortcutUsed{false};
+    std::atomic<bool> orderShortcutHeld{false},orderShortcutUsed{false};
+    std::atomic<int> timingShortcutHeld{0};
+    std::atomic<bool> timingShortcutUsed{false};
+    std::atomic<int> soundingScale[2];
+    std::atomic<int> modStage[8];
+    std::atomic<float> modVoltage[8];
+    std::atomic<int> playStage[2];
+    std::atomic<int> playPulse[2];
+    std::atomic<float> playPitch[2];
+    std::atomic<float> playGate[2];
+    std::atomic<int> playAccumulation[2];
+    std::atomic<bool> playMuted[2];
+    std::atomic<float> playCv[2], pitchPre[2], pitchPost[2];
+    std::atomic<float> displayBpm{120.f};
+    double meterClockElapsed=0.0;
+    bool meterClockSeen=false, meterWasExternal=false;
+
+    // A single atomic command publishes the held stage boundaries.
+    // Latching and held gestures are transient: opening a patch cannot hold gates.
+    std::atomic<unsigned> loopyCommand{0}, loopyHeld{0}, loopyMuteCommands{0};
+    std::atomic<bool> loopyLatched{false}, loopyMuteHeld{false}, loopyMuteUsed{false};
+    void clearLoopy() {loopyCommand.store(0);loopyHeld.store(0);loopyLatched.store(false);}
+    void requestLoopy(unsigned stages) {
+        loopyCommand.store(stages&255u);
+    }
+    void pressLoopyStage(int stage) {
+        unsigned mask=loopyHeld.fetch_or(1u<<stage)|(1u<<stage);requestLoopy(mask);
+    }
+    void releaseLoopyStage(int stage) {
+        unsigned mask=loopyHeld.fetch_and(~(1u<<stage))&~(1u<<stage);
+        if(!loopyLatched.load())requestLoopy(mask);
+    }
+    void latchLoopy() {if(loopyCommand.load()&255u)loopyLatched.store(true);}
+    void muteLoopy(int index) {loopyMuteUsed.store(true);loopyMuteCommands.fetch_xor(1u<<index);}
+    bool modLaneMuted(int lane) {return integer(MOD_GROUP_MUTE)!=0 || integer(modParam(lane,MOD_MUTE))!=0;}
+    void applyLoopyMutes() {
+        unsigned mask=loopyMuteCommands.exchange(0);
+        for(int i=0;i<11;++i)if(mask&(1u<<i)) {
+            int id=i==10?MOD_GROUP_MUTE:i<2?trackParam(i,MUTE):modParam(i-2,MOD_MUTE);
+            params[id].setValue(integer(id)?0.f:1.f);
+        }
+        if(mask)readSettings();
+    }
+    Metropolix() {
+        config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
+        auto* clkDiv=configParam<ClockDivisionQuantity>(CLOCK_OUT_DIV,1,256,1,"CLK output division");clkDiv->snapEnabled=true;clkDiv->randomizeEnabled=false;
+        auto* clkOffset=configParam<ClockOffsetQuantity>(CLOCK_OUT_OFFSET,0,255,0,"CLK output offset"," pulses");clkOffset->snapEnabled=true;clkOffset->randomizeEnabled=false;clkOffset->divisionParam=CLOCK_OUT_DIV;
+        auto* loop=configParam<LoopyPulseQuantity>(LOOPY_PULSES,0,64,0,"Loopy pulses");loop->snapEnabled=true;loop->randomizeEnabled=false;
+        configSwitch(LOOPY_TARGET,0,1,0,"Loopy target",{"Current track","Tracks 1+2"})->randomizeEnabled=false;
+        configSwitch(MOD_GROUP_MUTE,0,1,0,"All MOD lanes mute",{"Off","On"})->randomizeEnabled=false;
+        configParam(TEMPO, 0.1f, 400.f, 120.f, "Tempo", " BPM")->randomizeEnabled = false;
+        configSwitch(RUN, 0, 1, 0, "Transport", {"Stopped", "Running"})->randomizeEnabled = false;
+        configButton(RESET, "Reset position and accumulators");
+        configSwitch(ROOT, 0, 11, 0, "Root", {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"});
+        configSwitch(SCALE, 0, metro::ScaleCount-1, 1, "Scale", metro::scaleNames());
+        configParam(SCALE_LOCK,-1,metro::ScaleCount-1,-1,"Locked scale (-1 = unlocked)")->snapEnabled=true;
+        paramQuantities[SCALE_LOCK]->randomizeEnabled=false;
+        for(int i=0;i<metro::UserScaleCount;++i) {
+            auto* q=configParam(userScaleParam(i),1,4095,0xAB5,metro::scaleName(49+i)+" note mask");q->snapEnabled=true;q->randomizeEnabled=false;
+            configSwitch(userScaleParam(i,true),0,11,0,metro::scaleName(49+i)+" root",{"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"})->randomizeEnabled=false;
+        }
+        configParam(SCALE_NOTE,0,11,0,"User scale note cursor")->snapEnabled=true;paramQuantities[SCALE_NOTE]->randomizeEnabled=false;
+        const int shortcuts[]={1,2,3,4,5,6,0,17};
+        for(int i=0;i<8;++i) {
+            configSwitch(scaleShortcutParam(i),0,148,shortcuts[i],"Scale shortcut "+std::to_string(i+1),metro::scaleNames())->randomizeEnabled=false;
+            configSwitch(scaleShortcutParam(i,true),0,11,0,"Scale shortcut root "+std::to_string(i+1),{"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"})->randomizeEnabled=false;
+        }
+        configParam(RANGE, 1, 4, 3, "Slider range", " octaves")->snapEnabled = true;
+        const float notes[8] = {0, 4, 7, 12, 16, 19, 14, 7};
+        for (int s = 0; s < 8; ++s) {
+            std::string name = "Stage " + std::to_string(s + 1) + " ";
+            configParam(PITCH + s, 0, 1, notes[s] / 36.f, name + "pitch", "%", 0, 100);
+            configParam(PULSES + s, 1, 8, 1, name + "pulse count")->snapEnabled = true;
+            configSwitch(GATES + s, 0, 3, metro::Multi, name + "gate type", {"Rest", "Single", "Multi", "Hold"});
+        }
+        for (int t = 0; t < 2; ++t) {
+            playStage[t].store(-1);
+            playPulse[t].store(0);
+            playPitch[t].store(0.f);
+            playGate[t].store(0.f);playAccumulation[t].store(0);playMuted[t].store(false);
+            playCv[t].store(0.f); pitchPre[t].store(0.f); pitchPost[t].store(0.f);
+            soundingScale[t].store(1);
+            std::string name = "Track " + std::to_string(t + 1) + " ";
+            configParam(trackParam(t, LENGTH), 1, 8, 8, name + "length", " stages")->snapEnabled = true;
+            configParam(trackParam(t, OFFSET), 0, 7, 0, name + "offset", " stages")->snapEnabled = true;
+            configParam(trackParam(t, DIVISION), 1, 64, 1, name + "clock division")->snapEnabled = true;
+            configSwitch(trackParam(t, ORDER), 0, 20, 0, name + "order", orderLabels())->snapEnabled = true;
+            configSwitch(extraParam(t, REVERSED), 0, 1, 0, name + "direction", {"Forward", "Reverse"})->snapEnabled = true;
+            configParam(extraParam(t, PULSE_DIV), 1, 8, 1, name + "pulse-count division")->snapEnabled = true;
+            configParam(extraParam(t, PULSE_LIMIT), 0, 64, 0, name + "fixed pulse length (0 = Auto)")->snapEnabled = true;
+            configSwitch(extraParam(t, GATE_STRETCH), 0, 1, 0, name + "gate stretching", {"Off", "On"})->snapEnabled = true;
+            configSwitch(extraParam(t, RATCHET_MODE), 0, 2, 0, name + "ratchet mode", {"Multiply", "Pulse", "Gated"})->snapEnabled = true;
+            configSwitch(extraParam(t, ACCUM_AUTO_RESET), 0, 1, 0, name + "accumulator reset", {"Manual", "Auto"})->snapEnabled = true;
+            configParam(accumParam(t, NEGATIVE_LIMIT), 1, 28, 9, name + "negative accumulator limit", " scale degrees")->snapEnabled = true;
+            configSwitch(accumParam(t, BIPOLAR), 0, 1, 0, name + "accumulator polarity", {"Unipolar", "Bipolar"});
+            configSwitch(accumParam(t, ACCUM_ORDER), 0, 3, 0, name + "accumulator order", {"Wrap", "Pendulum", "Random", "Hold"});
+            configSwitch(accumModeParam(t), 0, 1, 0, name + "accumulator mode", {"Stage", "Track"});
+            configParam(trackParam(t, TRANSPOSE), -60, 60, 0, name + "transpose", " semitones")->snapEnabled = true;
+            configParam<GateLengthQuantity>(trackParam(t, GATE_LENGTH), 1, 100, 50, name + "gate length", "%");
+            configParam(gateScaleParam(t),0,100,100,name+"gate scale","%")->snapEnabled=true;
+            auto* slide=configParam<SlideAmountQuantity>(trackParam(t, SLIDE_TIME), 0, 100, 25, name + "slide amount", "%");slide->typeParam=slideTypeParam(t);
+            configSwitch(slideTypeParam(t),0,2,0,name+"slide type",{"Tempo","Analog","Acid"});
+            auto* cvType=configSwitch<TrackCvTypeQuantity>(cvTypeParam(t),0,2,0,name+"CV type",{"Bipolar ±","Unipolar +","Gate Toggle"});cvType->velocityParam=outputTrackParam(t,VELOCITY_SOURCE);
+            configSwitch(outputTrackParam(t,VELOCITY_SOURCE),0,3,2,name+"velocity source",{"50%","75%","100%","Track CV"});
+            configSwitch(outputTrackParam(t,SLIDER_OCTAVES),0,4,0,name+"slider octaves",{"Follow shared range","1 octave","2 octaves","3 octaves","4 octaves"});
+            configSwitch(outputTrackParam(t,SLIDER_DIRECTION),0,1,0,name+"slider direction",{"Normal","Inverted"});
+            configSwitch(trackBehaviorParam(t,PULSE_SOURCE),0,8,0,name+"pulse-count source",{"Switch","1","2","3","4","5","6","7","8"});
+            configSwitch(trackBehaviorParam(t,GATE_SOURCE),0,6,0,name+"gate-type source",gateSourceLabels());
+            configSwitch(trackBehaviorParam(t,REST_PITCH),0,1,0,name+"rest pitch",{"Hold","Update"});
+            configSwitch(TRACK_GLOBAL_RESET_1+t,0,1,1,name+"global reset",{"Off","On"})->randomizeEnabled=false;
+            configParam(swingParam(t), 50, 78, 50, name + "swing", "%")->snapEnabled = true;
+            configParam(trackParam(t, ACCUM_LIMIT), 1, 28, 9, name + "positive accumulator limit", " scale degrees")->snapEnabled = true;
+            configSwitch(trackParam(t, MUTE), 0, 1, 0, name + "mute", {"Off", "On"})->randomizeEnabled = false;
+            for (int s = 0; s < 8; ++s) {
+                std::string prefix = name + "stage " + std::to_string(s + 1) + " ";
+                configParam(stageParam(t, s, RATCHETS), 1, 8, 1, prefix + "ratchets")->snapEnabled = true;
+                configParam(stageParam(t, s, PROBABILITY), 0, 100, 100, prefix + "probability", "%")->snapEnabled = true;
+                configParam(stageParam(t, s, ACCUMULATION), -28, 28, 0, prefix + "accumulation", " scale degrees")->snapEnabled = true;
+                configSwitch(stageParam(t, s, SLIDE), 0, 1, 0, prefix + "slide", {"Off", "On"});
+                configSwitch(stageParam(t, s, SKIP), 0, 1, 0, prefix + "skip", {"Off", "On"});
+                auto* cv=configParam<TrackCvQuantity>(stageParam(t,s,CV),-5,5,0,prefix+"CV"," V");cv->typeParam=cvTypeParam(t);cv->velocityParam=outputTrackParam(t,VELOCITY_SOURCE);
+                configSwitch(cvRampParam(t,s),0,2,0,prefix+"CV transition",{"Step","sRamp (stage)","pRamp (pulse)"});
+                auto* pitch=configParam<PitchOverrideQuantity>(stageParam(t,s,PITCH_OVERRIDE),-1,60,-1,prefix+"pitch override");
+                pitch->scaleParam=SCALE; pitch->track=t; pitch->snapEnabled=true;
+                configParam<GateOverrideQuantity>(stageParam(t,s,GATE_OVERRIDE),-1,100,-1,prefix+"gate override")->snapEnabled=true;
+                configSwitch(stageOption(t, s, PROB_TARGET), 0, 1, 0, prefix + "probability target", {"Stage", "Pulse"});
+                configSwitch(stageOption(t, s, ACCUM_TRIGGER), 0, 2, 0, prefix + "accumulator trigger", {"Stage", "Pulse", "Ratchet"});
+            }
+        }
+        for (int lane = 0; lane < 8; ++lane) {
+            modStage[lane].store(-1);
+            modVoltage[lane].store(0.f);
+            std::string name = "MOD " + std::to_string(lane + 1) + " ";
+            configParam(modParam(lane, MOD_LENGTH), 1, 8, 8, name + "length", " stages")->snapEnabled = true;
+            configParam(modParam(lane, MOD_STAGE_OFFSET), 0, 7, 0, name + "offset", " stages")->snapEnabled = true;
+            configParam(modParam(lane, MOD_DIVISION), 1, 64, 1, name + "clock division")->snapEnabled = true;
+            configSwitch(modParam(lane, MOD_ORDER), 0, 20, 0, name + "play order", orderLabels());
+            configSwitch(modParam(lane, MOD_REVERSED), 0, 1, 0, name + "direction", {"Forward", "Reverse"});
+            configParam(modParam(lane, MOD_PULSE_LIMIT), 0, 64, 0, name + "pulse length (0 = Auto)")->snapEnabled = true;
+            auto* modType=configSwitch<ModTypeQuantity>(modParam(lane, MOD_TYPE), 0, 2, 0, name + "CV type", {"Bipolar ±", "Unipolar +", "Gate Toggle"});modType->destinationParam=modParam(lane,MOD_DESTINATION);
+            configSwitch(modParam(lane, MOD_DESTINATION), 0, metro::ModDestinationCount - 1, 0, name + "internal destination", modDestinations());
+            auto* assignment=configSwitch<RoutingAssignmentQuantity>(modParam(lane, MOD_ASSIGNMENT), 0, 2, 0, name + "destination tracks", {"Track 1", "Track 2", "Both tracks"});assignment->destinationParam=modParam(lane,MOD_DESTINATION);
+            configSwitch(modParam(lane, MOD_MUTE), 0, 1, 0, name + "mute", {"Off", "On"});
+            for (int stage = 0; stage < 8; ++stage) {
+                std::string prefix = name + "stage " + std::to_string(stage + 1) + " ";
+                auto* voltage = configParam<ModVoltageQuantity>(modParam(lane, MOD_VALUE + stage), -5, 5, 0, prefix + "voltage", " V");
+                voltage->typeParam = modParam(lane, MOD_TYPE);
+                voltage->destinationParam = modParam(lane, MOD_DESTINATION);
+                configSwitch(modParam(lane, MOD_RAMP + stage), 0, 1, 0, prefix + "transition", {"Step", "Ramp"});
+            }
+        }
+        configSwitch(OUTPUT_SOURCE_A, 0, metro::OutputSourceCount-1, 0, "Output A source", outputSources());
+        configSwitch(OUTPUT_SOURCE_B, 0, metro::OutputSourceCount-1, metro::outputSource(metro::OutFirstPulse), "Output B source", outputSources());
+        for (int input = 0; input < 3; ++input) {
+            std::string name = std::string("AUX ") + char('X' + input) + " ";
+            auxVoltage[input].store(0.f);
+            configParam(auxParam(input,AUX_AMOUNT),-1.f,1.f,0.f,name+"attenuverter","%",0,100);
+            configSwitch(auxParam(input,AUX_DESTINATION),0,metro::ModDestinationCount-1,0,name+"destination",modDestinations());
+            auto* assignment=configSwitch<RoutingAssignmentQuantity>(auxParam(input,AUX_ASSIGNMENT),0,2,0,name+"target",{"Track 1","Track 2","Both tracks"});assignment->destinationParam=auxParam(input,AUX_DESTINATION);
+            configInput(AUX_X_IN+input,name+"CV / gate (channel 1; assign with the button below)");
+        }
+        for(int k=0;k<2;++k) {
+            std::string name="CTRL "+std::to_string(k+1)+" ";
+            configParam(ctrlParam(k,CTRL_VALUE),-1.f,1.f,k?-.5f:0.f,name+"position","%",0,50,50);
+            configSwitch(ctrlParam(k,CTRL_DESTINATION),0,metro::CtrlDestinationCount-1,k?metro::CtrlSlideAmount:metro::CtrlGateLength,name+"destination",ctrlDestinations())->randomizeEnabled=false;
+            configSwitch(ctrlParam(k,CTRL_ASSIGNMENT),0,2,2,name+"target",{"Track 1","Track 2","Both tracks"})->randomizeEnabled=false;
+        }
+        configurePresets();
+        configInput(CLOCK_IN, "Clock (one pulse per sixteenth note)");
+        configInput(RESET_IN, "Reset");
+        configOutput(PITCH_1, "Track 1 pitch (1 V/oct)");
+        configOutput(GATE_1, "Track 1 gate (5 V)");
+        configOutput(PITCH_2, "Track 2 pitch (1 V/oct)");
+        configOutput(GATE_2, "Track 2 gate (5 V)");
+        configOutput(CLOCK_OUT, "Clock (5 V, 1 ms)");
+        configOutput(A_OUT, "Assignable A: CV, velocity, clock, stage, transport or controller signal");
+        configOutput(B_OUT, "Assignable B: CV, velocity, clock, stage, transport or controller signal");
+        for (auto* q : paramQuantities) {
+            if (dynamic_cast<SwitchQuantity*>(q)) q->snapEnabled = true;
+            q->description = "Hold and drag up to increase, down to decrease. Ctrl-drag for fine adjustment. Right-click for values and reset.";
+        }
+        paramQuantities[RUN]->description = "Click to start or stop. Stopping silences gates and modulation; pitch holds.";
+        paramQuantities[RESET]->description = "Press to restart note tracks, MOD lanes, and accumulators.";
+        paramQuantities[CLOCK_OUT_DIV]->description = "Divide the unswung master clock by /1 to /256. Global: internal preset recall retains this setting.";
+        paramQuantities[CLOCK_OUT_OFFSET]->description = "Shift divided CLK triggers later by 0 to division minus one master pulses. Long encoder press resets both CLK fields.";
+        for (int t=0; t<2; ++t)
+            paramQuantities[accumModeParam(t)]->description = "Stage changes each stage independently. Track carries accumulation across the whole phrase. Takes effect on the next track clock pulse.";
+        configSwitch(CLOCK_SOURCE,0,3,0,"Clock source",{"Auto (VCV cable)","Internal","External","MIDI"});
+        configSwitch(CLOCK_RUNNING_ONLY,0,2,2,"Clock / reset output",{"Always","Running","VCV legacy (clock Running, reset Always)"});
+        configSwitch(RESET_INPUT_MODE,0,2,0,"Reset input",{"Reset","Run (restart)","Run-C (continue)"});
+        configSwitch(BOTTOM_PITCH,0,12,12,"Bottom pitch",{"C","C#","D","D#","E","F","F#","G","G#","A","A#","B","Root"});
+        configParam(TUNER_OCTAVE,-5,5,0,"Tuner pitch"," octaves (C0 = 0 V)")->snapEnabled=true;
+        configSwitch(TUNER_GATE,0,1,0,"Tuner gates",{"High","Clock"});
+        std::vector<std::string> initLabels{"Off"};for(int slot=0;slot<64;++slot)initLabels.push_back(std::to_string(slot/8+1)+"-"+std::to_string(slot%8+1));
+        configSwitch(INIT_PRESET,0,64,0,"Init preset",initLabels);workflowRandomSource.state=random::u32();
+        paramQuantities[RUN]->description="Run button transport. A connected Reset jack in Run/Run-C mode overrides this saved choice; the light follows actual playback.";
+        paramQuantities[RESET]->description="Reset tracks with Global Reset On. Hold a TRK button to force that track's reset even with Global Reset Off.";
+        configSwitch(ENC_CONFIRM,0,1,0,"Encoder confirmation",{"Off","On"});
+        configSwitch(SHOW_POSITION,0,1,1,"Show stage position",{"Off","On"});
+        for(int id:{BUTTON_LEVEL,SLIDER_LEVEL,SCREEN_LEVEL})configParam(id,1,4,4,id==BUTTON_LEVEL?"Button LED level":id==SLIDER_LEVEL?"Stage LED level":"Screen level");
+        configParam(CV_OUT_DELAY,0,21,0,"CV output delay"," ms");
+        configParam(EXT_CLOCK_DIV,1,256,1,"External clock input division");
+        configSwitch(RUN_ON_BOOT,0,2,2,"Run on boot",{"Off","On","Recall Rack patch"});
+        configureMidi();
+        configSwitch(MX_MODE,0,8,0,"MX expander mode",{"Transport A","Transport B","Transport C","Prob Clocks","Mod Clocks","Stage Num","Mod Stage Num","Mod Gate","Mod Trig"});
+        configSwitch(MX_TRACK,0,1,0,"MX track",{"TRK 1","TRK 2"});
+        configSwitch(MX_LANE,0,7,0,"MX MOD lane",{"MOD 1","MOD 2","MOD 3","MOD 4","MOD 5","MOD 6","MOD 7","MOD 8"});
+        // Convenient software defaults; the manual does not list factory pairs.
+        const int orderDefaults[]={0,0,1,2,3,12,18,20};
+        for(int slot=0;slot<8;++slot) {
+            configSwitch(orderShortcutParam(slot),0,20,orderDefaults[slot],"Order shortcut "+std::to_string(slot+1),orderLabels());
+            configSwitch(orderShortcutParam(slot,true),0,1,slot==1?1:0,"Order shortcut direction "+std::to_string(slot+1),{"Forward","Reverse"});
+        }
+        mx.seed(random::u32());
+        for(int id=CLOCK_SOURCE;id<NUM_PARAMS;++id){paramQuantities[id]->randomizeEnabled=false;paramQuantities[id]->snapEnabled=true;}
+        sequencer.seed(random::u32());
+        readSettings();
+    }
+
+    int integer(int id) { return static_cast<int>(std::round(params[id].getValue())); }
+    int scaleRootParam(int scale=-1) {
+        if(scale<0)scale=integer(SCALE);
+        return metro::userScale(scale)?userScaleParam(scale-metro::FactoryScaleCount,true):ROOT;
+    }
+    metro::Scale uiScale(int index) {
+        return metro::userScale(index)?metro::scaleFromMask(unsigned(integer(userScaleParam(index-49)))):metro::scaleAt(index);
+    }
+#include "PresetAdapter.hpp"
+#include "ChainAdapter.hpp"
+#include "MidiAdapter.hpp"
+    void readSettings() {
+        auto& c = sequencer.settings;
+        // Direct CTRL destinations own the panel parameter itself. Offsets are
+        // routed separately and never accumulate into saved base values.
+        for(int k=0;k<2;++k) {
+            auto& ctrl=c.controls[k];
+            ctrl.value=metro::ctrlClamp(readPanel(k+8));
+            ctrl.destination=static_cast<metro::CtrlDestination>(metro::clamp(integer(ctrlParam(k,CTRL_DESTINATION)),0,int(metro::CtrlDestinationCount)-1));
+            ctrl.assignment=metro::clamp(integer(ctrlParam(k,CTRL_ASSIGNMENT)),0,2);
+            for(int t=0;t<2;++t) {
+                int id=ctrlBaseParam(ctrl.destination,t);
+                if(id>=0 && (ctrl.targets(t) || ctrl.destination==metro::CtrlTempo))
+                    params[id].setValue(metro::ctrlDirectValue(ctrl.destination,ctrl.value));
+            }
+        }
+        c.outputSources[0] = integer(OUTPUT_SOURCE_A);
+        c.outputSources[1] = integer(OUTPUT_SOURCE_B);
+        for (int input=0; input<3; ++input) {
+            auto& aux = c.auxInputs[input];
+            aux.amount = params[auxParam(input,AUX_AMOUNT)].getValue();
+            aux.destination = static_cast<metro::ModDestination>(integer(auxParam(input,AUX_DESTINATION)));
+            aux.assignment = integer(auxParam(input,AUX_ASSIGNMENT));
+        }
+        for (int lane = 0; lane < 8; ++lane) {
+            auto& mod = c.modLanes[lane];
+            mod.length = integer(modParam(lane, MOD_LENGTH));
+            mod.offset = integer(modParam(lane, MOD_STAGE_OFFSET));
+            mod.division = integer(modParam(lane, MOD_DIVISION));
+            mod.order = static_cast<metro::Order>(integer(modParam(lane, MOD_ORDER)));
+            mod.reversed = integer(modParam(lane, MOD_REVERSED)) != 0;
+            mod.pulseLimit = integer(modParam(lane, MOD_PULSE_LIMIT));
+            mod.type = static_cast<metro::ModType>(integer(modParam(lane, MOD_TYPE)));
+            mod.destination = static_cast<metro::ModDestination>(integer(modParam(lane, MOD_DESTINATION)));
+            mod.assignment = integer(modParam(lane, MOD_ASSIGNMENT));
+            mod.mute = modLaneMuted(lane) || (sequencer.chainMutes & 4);
+            for (int stage = 0; stage < 8; ++stage) {
+                mod.values[stage] = params[modParam(lane, MOD_VALUE + stage)].getValue();
+                mod.ramps[stage] = integer(modParam(lane, MOD_RAMP + stage)) != 0;
+            }
+        }
+        c.bpm = params[TEMPO].getValue();
+        c.clockRunningOnly=integer(CLOCK_RUNNING_ONLY)!=0;c.resetRunningOnly=integer(CLOCK_RUNNING_ONLY)==1;c.bottomPitch=integer(BOTTOM_PITCH);
+        c.clockOutDivision=metro::ClockOutput::division(integer(CLOCK_OUT_DIV));
+        c.clockOutOffset=metro::ClockOutput::offset(integer(CLOCK_OUT_OFFSET),c.clockOutDivision);
+        c.root = integer(ROOT);
+        c.scale = integer(SCALE);
+        c.lockedScale = integer(SCALE_LOCK);
+        for(int i=0;i<metro::UserScaleCount;++i){c.userScales[i].mask=unsigned(integer(userScaleParam(i)));c.userScales[i].root=integer(userScaleParam(i,true));}
+        c.octaves = integer(RANGE);
+        for (int s = 0; s < 8; ++s) {
+            c.stages[s].pitch = readPanel(s);
+            c.stages[s].pulses = integer(PULSES + s);
+            c.stages[s].gate = static_cast<metro::Gate>(integer(GATES + s));
+        }
+        for (int t = 0; t < 2; ++t) {
+            auto& track = c.tracks[t];
+            track.length = integer(trackParam(t, LENGTH));
+            track.offset = integer(trackParam(t, OFFSET));
+            track.division = integer(trackParam(t, DIVISION));
+            track.order = static_cast<metro::Order>(integer(trackParam(t, ORDER)));
+            track.reversed = integer(extraParam(t, REVERSED)) != 0;
+            track.pulseDivision = integer(extraParam(t, PULSE_DIV));
+            track.pulseLimit = integer(extraParam(t, PULSE_LIMIT));
+            track.gateStretch = integer(extraParam(t, GATE_STRETCH)) != 0;
+            track.ratchetMode = static_cast<metro::RatchetMode>(integer(extraParam(t, RATCHET_MODE)));
+            track.autoAccumReset = integer(extraParam(t, ACCUM_AUTO_RESET)) != 0;
+            track.transpose = integer(trackParam(t, TRANSPOSE));
+            track.gateLength = params[trackParam(t, GATE_LENGTH)].getValue() * 0.01f;
+            track.gateScale=params[gateScaleParam(t)].getValue()*.01f;
+            track.slideTime = params[trackParam(t, SLIDE_TIME)].getValue() * 0.01f;
+            track.slideType=static_cast<metro::SlideType>(metro::clamp(integer(slideTypeParam(t)),0,2));
+            track.cvType=effectiveCvType(t);
+            track.velocitySource=integer(outputTrackParam(t,VELOCITY_SOURCE));
+            track.sliderOctaves=integer(outputTrackParam(t,SLIDER_OCTAVES));
+            track.sliderInverted=integer(outputTrackParam(t,SLIDER_DIRECTION))!=0;
+            track.pulseSource=integer(trackBehaviorParam(t,PULSE_SOURCE));
+            track.gateSource=integer(trackBehaviorParam(t,GATE_SOURCE));
+            track.restPitchUpdate=integer(trackBehaviorParam(t,REST_PITCH))!=0;
+            track.globalReset=integer(TRACK_GLOBAL_RESET_1+t)!=0;
+            track.swing = params[swingParam(t)].getValue();
+            track.accumLimit = integer(trackParam(t, ACCUM_LIMIT));
+            track.accumNegativeLimit = integer(accumParam(t, NEGATIVE_LIMIT));
+            track.accumBipolar = integer(accumParam(t, BIPOLAR)) != 0;
+            track.accumOrder = static_cast<metro::AccumOrder>(integer(accumParam(t, ACCUM_ORDER)));
+            track.accumMode = static_cast<metro::AccumMode>(integer(accumModeParam(t)));
+            track.mute = integer(trackParam(t, MUTE)) != 0;
+            for (int s = 0; s < 8; ++s) {
+                auto& edit = track.stages[s];
+                edit.ratchets = integer(stageParam(t, s, RATCHETS));
+                edit.probability = params[stageParam(t, s, PROBABILITY)].getValue();
+                edit.probabilityPerPulse = integer(stageOption(t, s, PROB_TARGET)) != 0;
+                edit.accumulation = integer(stageParam(t, s, ACCUMULATION));
+                edit.accumTrigger = static_cast<metro::AccumTrigger>(integer(stageOption(t, s, ACCUM_TRIGGER)));
+                edit.slide = integer(stageParam(t, s, SLIDE)) != 0;
+                edit.skip = integer(stageParam(t, s, SKIP)) != 0;
+                edit.cv = params[stageParam(t, s, CV)].getValue();
+                edit.cvRamp=static_cast<metro::StageCvRamp>(metro::clamp(integer(cvRampParam(t,s)),0,2));
+                edit.pitchOverride=integer(stageParam(t,s,PITCH_OVERRIDE));
+                edit.gateOverride=integer(stageParam(t,s,GATE_OVERRIDE));
+            }
+        }
+        publishPickup();
+    }
+
+    void process(const ProcessArgs& args) override {
+        processMidiInput(args);
+        bool update = controlCounter++ % 32 == 0;
+        if (update) readSettings();
+        for (int input=0; input<3; ++input) {
+            auto& aux = sequencer.settings.auxInputs[input];
+            aux.connected = inputs[AUX_X_IN+input].isConnected();
+            aux.voltage = inputs[AUX_X_IN+input].getVoltage();
+            if (update) auxVoltage[input].store(aux.effectiveVoltage(),std::memory_order_relaxed);
+        }
+        bool clockEdge = clockTrigger.process(inputs[CLOCK_IN].getVoltage(), 0.1f, 1.5f);
+        bool resetEdge = resetTrigger.process(inputs[RESET_IN].getVoltage(), 0.1f, 1.5f);
+        bool button = resetButton.process(params[RESET].getValue());
+        button=resetFromUi.exchange(false)||button;
+        int source=integer(CLOCK_SOURCE);
+        bool external = source==2 || source==3 || (source==0 && inputs[CLOCK_IN].isConnected());
+        if(external!=meterWasExternal || (button && !heldTrackReset.load()) || (resetEdge && integer(RESET_INPUT_MODE)==0))externalDivider.reset();
+        clockEdge=externalDivider.process(clockEdge,integer(EXT_CLOCK_DIV));
+        if(source==3)clockEdge=midiClockInput.edge();
+        if(!external || !meterWasExternal){meterClockSeen=false;meterClockElapsed=0.0;}
+        if(external) {
+            meterClockElapsed+=args.sampleTime;
+            if(clockEdge) {
+                if(meterClockSeen)displayBpm.store(static_cast<float>(15.0/metro::clamp(meterClockElapsed,0.001,150.0)),std::memory_order_relaxed);
+                meterClockElapsed=0.0;meterClockSeen=true;
+            }
+        }
+        meterWasExternal=external;
+        int resetMode=integer(RESET_INPUT_MODE);
+        bool gatedRun=resetMode && inputs[RESET_IN].isConnected();
+        bool run = gatedRun?resetTrigger.isHigh():params[RUN].getValue() > 0.5f;
+        if(transportRestoreHold){if(params[RUN].getValue()>.5f || (gatedRun && !resetTrigger.isHigh()))transportRestoreHold=false;else run=false;}
+        resetEdge=resetEdge && resetMode!=2;
+        if(gatedRun)sequencer.resumeOnRun=true;
+        else sequencer.resumeOnRun=integer(RUN_MODE)!=0;
+        sequencer.manualResetForce=button && !resetEdge?heldTrackReset.load():0;
+        transportRunning.store(run,std::memory_order_relaxed);
+        bool globalResetEvent=resetEdge || midiInputReset || (button && !sequencer.manualResetForce);
+        processChainCommands(run, external, globalResetEvent);
+        processPresetCommands(run, external, globalResetEvent);
+        processMidiPreset(run,globalResetEvent);
+        unsigned gesture=loopyCommand.load();
+        sequencer.loopy.stages=gesture&255u;sequencer.loopy.targets=integer(LOOPY_TARGET)?3u:1u<<selectedTrack.load();
+        sequencer.loopy.pulses=integer(LOOPY_PULSES);
+        if(!run)applyLoopyMutes();
+        sequencer.resumeOnRun=gatedRun || integer(RUN_MODE)!=0 || (source==3 && midiResume);
+        if(midiInputReset)sequencer.reset();
+        sequencer.process(args.sampleTime, run, external, clockEdge, resetEdge || button, [this] { presetClock(); applyLoopyMutes(); });
+        processMidiOutput(args,run,external,globalResetEvent,update,clockEdge);
+        processMx(args,update);
+        for (int t = 0; t < 2; ++t) {
+            const auto& state = sequencer.sounding(t);
+            int physical=sequencer.swapped()?1-t:t;
+            outputs[PITCH_1 + 2 * physical].setVoltage(state.pitch);
+            outputs[GATE_1 + 2 * physical].setVoltage(state.gate);
+            outputs[A_OUT + t].setVoltage(sequencer.aux[t]);
+            if (update) {
+                playStage[t].store(state.stage, std::memory_order_relaxed);
+                playPulse[t].store(state.pulse, std::memory_order_relaxed);
+                playPitch[t].store(state.pitch, std::memory_order_relaxed);
+                playGate[t].store(state.gate,std::memory_order_relaxed);
+                playAccumulation[t].store(state.activeAccumulation,std::memory_order_relaxed);
+                playMuted[t].store(sequencer.trackMuted(t),std::memory_order_relaxed);
+                playCv[t].store(state.cv, std::memory_order_relaxed);
+                soundingScale[t].store(sequencer.scaleIndex(t),std::memory_order_relaxed);
+                pitchPre[t].store(sequencer.modulation.routes[t][metro::ModPitchPre]+sequencer.controls.values[t][metro::CtrlPitchPre], std::memory_order_relaxed);
+                pitchPost[t].store(sequencer.modulation.routes[t][metro::ModPitchPost]+sequencer.controls.values[t][metro::CtrlPitchPost], std::memory_order_relaxed);
+                for (int s = 0; s < 8; ++s)
+                    lights[POSITION_1 + t * 8 + s].setBrightness((sequencer.running || sequencer.playerPlaying[t]) && state.stage == s ? 1.f : 0.f);
+            }
+        }
+        outputs[CLOCK_OUT].setVoltage(sequencer.clock);
+        if(tunerActive.load()){for(int t=0;t<2;++t){outputs[PITCH_1+t*2].setVoltage(float(integer(TUNER_OCTAVE)));outputs[GATE_1+t*2].setVoltage(integer(TUNER_GATE)?(run?sequencer.masterClock:0.f):5.f);}}
+        if (update) for (int lane = 0; lane < 8; ++lane) {
+            modStage[lane].store(sequencer.running ? sequencer.modulation.lanes[lane].stage : -1, std::memory_order_relaxed);
+            modVoltage[lane].store(sequencer.modulation.outputs[lane], std::memory_order_relaxed);
+        }
+        if (update) {
+            externalClock.store(external, std::memory_order_relaxed);
+            modSkipMask.store((sequencer.modulation.routes[0][metro::ModSkipInvert]>=1.5f?1u:0u)|(sequencer.modulation.routes[1][metro::ModSkipInvert]>=1.5f?2u:0u),std::memory_order_relaxed);
+            if(!external)displayBpm.store(sequencer.effectiveTempo(),std::memory_order_relaxed);
+        }
+        std::array<float,NUM_OUTPUTS> signals;for(int id=0;id<NUM_OUTPUTS;++id)signals[id]=outputs[id].getVoltage();
+        signals=outputDelay.process(signals,params[CV_OUT_DELAY].getValue());for(int id=0;id<NUM_OUTPUTS;++id)outputs[id].setVoltage(signals[id]);
+        // Avoid signed counter overflow in patches left running for days.
+        controlCounter &= 31;
+    }
+
+    void processMx(const ProcessArgs& args,bool update){
+        int track=metro::clamp(integer(MX_TRACK),0,1);if(sequencer.swapped())track=1-track;int lane=metro::clamp(integer(MX_LANE),0,7),mode=metro::clamp(integer(MX_MODE),0,int(metro::MxModeCount)-1);
+        bool reset=mxResetSerial!=sequencer.resetSerial;mxResetSerial=sequencer.resetSerial;
+        auto signals=mx.process(args.sampleTime,mode,sequencer.masterTick,sequencer.masterPeriod,
+            sequencer.running || !sequencer.settings.clockRunningOnly,reset,sequencer.running,
+            sequencer.running || !sequencer.settings.resetRunningOnly,sequencer.modulation.clocks,
+            sequencer.sounding(track).stage,sequencer.running || sequencer.playerPlaying[track],sequencer.trackMuted(track),
+            sequencer.modulation.lanes[lane].stage,sequencer.running,sequencer.settings.modLanes[lane].mute,sequencer.modulation.outputs);
+        int channel=integer(MIDI_MX_CHANNEL);bool modLevels=mode==metro::MxModGate || mode==metro::MxModTrig;
+        if(!modLevels && mode!=midiMxOutput.mode)midiMxLevels.fill(127);
+        // Programmed stage values change on a master tick, control update or
+        // bus rebind. Avoid converting all eight targets on every audio sample.
+        if(channel && modLevels && (update || sequencer.masterTick || channel!=midiMxOutput.channel || mode!=midiMxOutput.mode))for(int l=0;l<8;++l){
+            int stage=sequencer.modulation.lanes[l].stage;const auto& config=sequencer.settings.modLanes[l];auto type=metro::effectiveModType(config.type,config.destination);
+            float target=stage>=0 && stage<8?config.values[stage]:0.f;
+            if(type==metro::ModGate)target=target>=1.5f?5.f:0.f;else target=metro::modClamp(target,type==metro::ModUnipolar?0.f:-5.f,5.f);
+            midiMxLevels[l]=metro::midiVoltage(target,type==metro::ModBipolar);
+        }
+        midiMxOutput.process(channel,integer(MIDI_MX_OUTPUT),mode,signals,midiMxLevels,[this](int s,int a,int b,int n){emitMidi(s,a,b,n);});
+        auto* child=rightExpander.module;bool connected=child && child->leftExpander.module==this && modelMX && child->model==modelMX && child->leftExpander.producerMessage;
+        if(connected){auto* message=static_cast<metro::MxMessage*>(child->leftExpander.producerMessage);message->signature=metro::MxMessage::Signature;message->sourceId=id;message->output=signals;message->delay=params[CV_OUT_DELAY].getValue();message->level=params[BUTTON_LEVEL].getValue()*.25f;child->leftExpander.requestMessageFlip();}
+        if(update)mxConnected.store(connected,std::memory_order_relaxed);
+    }
+
+    void onSampleRateChange(const SampleRateChangeEvent& e) override {outputDelay.prepare(e.sampleRate);}
+    void onReset(const ResetEvent& e) override {
+        ++uiRestoreSerial;
+        resetFromUi.store(false);
+        clearPitchPreview();
+        resetMidiRuntime();
+        factoryCursor.store(0);factoryConfirmCursor=0;factoryNoticeUntil=0;if(uiPage.load()==FACTORY_CONFIRM_PAGE)uiPage.store(FACTORY_PAGE);
+        Module::onReset(e);presetSetupEditing.store(false);clearPickup();tunerActive.store(false);heldTrackReset.store(0);setupCursor.store(0);globalCursor.store(0);setupDirectChild.store(false);clearWorkflows();cancelDraft();uiSetupCursor.store(0);modMenuCursor.store(0);externalDivider.reset();
+        clearLoopy();loopyMuteCommands.store(0);loopyMuteHeld.store(false);
+        scaleEditing.store(false);scaleShortcutHeld.store(false);
+        orderShortcutHeld.store(false);orderShortcutUsed.store(false);
+        timingShortcutHeld.store(0);timingShortcutUsed.store(false);
+        resetPresetRuntime();
+        resetChainRuntime();
+        { std::lock_guard<std::mutex> lock(presetMutex);chainState.enabled=false;chainEnabled.store(false); }
+        sequencer.reset();
+        readSettings();
+    }
+    json_t* paramsToJson() override {
+        // A quantity may display a constrained value (positive CV, clock offset,
+        // scale degree). Preserve its underlying setting for later mode changes.
+        auto* array=json_array();for(int id=0;id<NUM_PARAMS;++id)json_array_append_new(array,json_pack("{s:i,s:f}","id",id,"value",double(paramQuantities[id]->ParamQuantity::getValue())));return array;
+    }
+    void paramsFromJson(json_t* root) override {
+        size_t index;json_t* entry;
+        json_array_foreach(root,index,entry){auto* id=json_object_get(entry,"id");if(!id)id=json_object_get(entry,"paramId");json_int_t number=id?json_integer_value(id):json_int_t(index);auto* value=json_object_get(entry,"value");
+            if((id && !json_is_integer(id)) || number<0 || number>=NUM_PARAMS || !json_is_number(value))continue;
+            int n=int(number);
+            double v=json_number_value(value);if(!std::isfinite(v))continue;auto* q=paramQuantities[n];
+            float bounded=float(std::max(double(q->minValue),std::min(double(q->maxValue),v)));if(q->snapEnabled)bounded=std::round(bounded);
+            APP->engine->setParamValue(this,n,bounded);
+        }
+    }
+    json_t* dataToJson() override {
+        json_t* root = json_object();
+        json_object_set_new(root,"panelStyle",json_integer(panelStyle.load()));
+        json_object_set_new(root,"midiInput",midiInput.toJson());json_object_set_new(root,"midiOutput",midiOutput.toJson());json_object_set_new(root,"midiSetupCursor",json_integer(midiSetupCursor.load()));
+        json_object_set_new(root,"uiSetupCursor",json_integer(uiSetupCursor.load()));json_object_set_new(root,"modMenuCursor",json_integer(modMenuCursor.load()));
+        json_object_set_new(root, "schemaVersion", json_integer(35));
+        json_object_set_new(root,"backupCursor",json_integer(backupCursor.load()));
+        json_object_set_new(root,"backupPresetCursor",json_integer(backupPresetCursor.load()));
+        json_object_set_new(root,"factoryCursor",json_integer(factoryCursor.load()));
+        json_object_set_new(root,"pickup",pickupToJson());
+        json_object_set_new(root, "chainFormat", json_integer(1));
+        json_object_set_new(root, "chains", chainsToJson());
+        json_object_set_new(root, "presetFormat", json_integer(PRESET_FORMAT));
+        json_object_set_new(root, "presets", presetsToJson());
+        json_object_set_new(root, "presetBank", json_integer(presetBankIndex.load()));
+        json_object_set_new(root, "selectedCtrl", json_integer(selectedCtrl.load()));
+        json_object_set_new(root,"trackMenuCursor",json_integer(trackMenuCursor.load()));
+        json_object_set_new(root,"setupCursor",json_integer(setupCursor.load()));json_object_set_new(root,"setupDirectChild",json_boolean(setupDirectChild.load()));json_object_set_new(root,"globalCursor",json_integer(globalCursor.load()));
+        json_object_set_new(root, "selectedAux", json_integer(selectedAux.load()));
+        json_object_set_new(root, "uiHome", json_integer(uiHome.load()));
+        json_object_set_new(root, "uiStageDetail", json_boolean(uiStageDetail.load()));
+        json_object_set_new(root, "uiPage", json_integer(uiPage.load()==FACTORY_CONFIRM_PAGE?FACTORY_PAGE:uiPage.load()));
+        json_object_set_new(root, "uiField", json_integer(uiField.load()));
+        json_object_set_new(root, "uiMod", json_boolean(uiMod.load()));
+        json_object_set_new(root, "uiEdit", json_boolean(uiEdit.load()));
+        json_object_set_new(root, "uiChooseFunction", json_boolean(uiChooseFunction.load()));
+        json_object_set_new(root, "modEditor", json_boolean(modEditor.load()));
+        json_object_set_new(root, "performanceEditor", json_boolean(performanceEditor.load()));
+        json_object_set_new(root, "selectedLane", json_integer(selectedLane.load()));
+        json_object_set_new(root, "expanded", json_boolean(expanded.load()));
+        json_object_set_new(root, "selectedTrack", json_integer(selectedTrack.load()));
+        json_object_set_new(root, "selectedStage", json_integer(selectedStage.load()));
+        json_object_set_new(root, "selectedRow", json_integer(selectedRow.load()));
+        return root;
+    }
+    void dataFromJson(json_t* root) override {
+        auto* style=json_object_get(root,"panelStyle");
+        panelStyle.store(json_is_integer(style) && json_integer_value(style)==ATRIUM?ATRIUM:CLASSIC_METAL);
+        ++uiRestoreSerial;
+        resetFromUi.store(false);
+        clearPitchPreview();
+        resetMidiRuntime();midiInput.fromJson(json_object_get(root,"midiInput"));midiOutput.fromJson(json_object_get(root,"midiOutput"));midiInput.setChannel(-1);midiOutput.setChannel(-1);
+        clearLoopy();loopyMuteCommands.store(0);loopyMuteHeld.store(false);
+        scaleEditing.store(false);scaleShortcutHeld.store(false);
+        orderShortcutHeld.store(false);orderShortcutUsed.store(false);
+        timingShortcutHeld.store(0);timingShortcutUsed.store(false);
+        outputDraft[0].store(-1);outputDraft[1].store(-1);
+        presetSetupEditing.store(false);tunerActive.store(false);heldTrackReset.store(0);clearWorkflows();cancelDraft();externalDivider.reset();
+        uiSetupCursor.store(metro::clamp(int(json_integer_value(json_object_get(root,"uiSetupCursor"))),0,7));
+        int schema=int(json_integer_value(json_object_get(root,"schemaVersion")));
+        auto cursorValue=[root](const char* key,int high){return int(std::max<json_int_t>(0,std::min<json_int_t>(high,json_integer_value(json_object_get(root,key)))));};
+        int midiCursor=cursorValue("midiSetupCursor",schema<35?5:7);if(schema<35 && midiCursor>=4)midiCursor+=2;
+        midiSetupCursor.store(metro::clamp(midiCursor,0,7));
+        backupCursor.store(metro::clamp(int(json_integer_value(json_object_get(root,"backupCursor"))),0,3));
+        backupPresetCursor.store(schema<30?0:metro::clamp(int(json_integer_value(json_object_get(root,"backupPresetCursor"))),0,9));
+        factoryCursor.store(schema<31?0:metro::clamp(int(json_integer_value(json_object_get(root,"factoryCursor"))),0,1));factoryConfirmCursor=0;factoryNoticeUntil=0;
+        modMenuCursor.store(metro::clamp(cursorValue("modMenuCursor",3)+(schema<27?2:0),0,3));
+        int cursor=cursorValue("trackMenuCursor",15);if(schema<23 && cursor>=8)++cursor;
+        if(schema<27 && cursor>=10)cursor+=5;
+        trackMenuCursor.store(metro::clamp(cursor,0,15));int savedSetup=cursorValue("setupCursor",schema<34?7:schema<35?16:18);
+        if(schema<34){const int legacy[]={SetupClock,SetupPresets,SetupChains,SetupClock,SetupInit,SetupUi,SetupMidiClock,SetupVersion};savedSetup=legacy[metro::clamp(savedSetup,0,schema<31?6:7)];}
+        else if(schema<35 && savedSetup>=13)savedSetup+=2;
+        setupCursor.store(metro::clamp(savedSetup,0,SetupItemCount-1));setupDirectChild.store(schema>=34 && json_is_true(json_object_get(root,"setupDirectChild")));globalCursor.store(metro::clamp(int(json_integer_value(json_object_get(root,"globalCursor"))),0,5));
+        if(schema<25)for(int id=ENC_CONFIRM;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(!json_is_true(json_object_get(root,"preserveTransportState")) && integer(RUN_ON_BOOT)<2)params[RUN].setValue(float(integer(RUN_ON_BOOT)));
+        transportRestoreHold=json_is_true(json_object_get(root,"preserveTransportState")) && integer(RUN)==0;
+        if(schema<24)params[INIT_PRESET].setValue(0);
+        if(schema<23)for(int id=CLOCK_SOURCE;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<20)
+            for(int id=TRACK_BEHAVIOR;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<19){
+            for(int id=OUTPUT_TRACK_OPTIONS;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+            // Missing pre-routing source parameters used legacy CV defaults.
+            if(integer(OUTPUT_SOURCE_A)>=10)params[OUTPUT_SOURCE_A].setValue(0);
+            if(integer(OUTPUT_SOURCE_B)>=10)params[OUTPUT_SOURCE_B].setValue(1);
+        }
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<18)
+            for(int id=CLOCK_OUT_DIV;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<17)
+            for(int id=CV_TYPE_1;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<16)
+            for(int t=0;t<2;++t)params[slideTypeParam(t)].setValue(metro::TempoSlide);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<15)
+            for(int id=SCALE_LOCK;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<14)
+            for(int id=LOOPY_PULSES;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<13)
+            for(int id=GATE_SCALE_1;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<12)
+            for(int t=0;t<2;++t)params[swingParam(t)].setValue(50.f);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<9)
+            for(int id=CTRL_PARAMS;id<TOTAL_PULSES;++id)params[id].setValue(0.f);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<10)
+            for(int id=TOTAL_PULSES;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        presetsFromJson(root);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<11)params[RUN_MODE].setValue(0);
+        chainsFromJson(root);
+        // Old module presets may be loaded over an already configured module.
+        // Missing AUX parameters must restore the original, unassigned sound.
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<7)
+            for(int id=AUX_PARAMS;id<ACCUM_MODE;++id)params[id].setValue(0.f);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<8)
+            for(int t=0;t<2;++t)params[accumModeParam(t)].setValue(0.f);
+        // Preserve the original prototype's ORDER=1 (Reverse) after ORDER=1
+        // becomes Ping Pong. All existing parameter IDs remain unchanged.
+        if (json_integer_value(json_object_get(root, "schemaVersion")) < 2) {
+            for (int t = 0; t < 2; ++t) {
+                if (integer(trackParam(t, ORDER)) == 1) {
+                    params[trackParam(t, ORDER)].setValue(0.f);
+                    params[extraParam(t, REVERSED)].setValue(1.f);
+                }
+            }
+        }
+        if (json_integer_value(json_object_get(root, "schemaVersion")) < 3) {
+            for (int t = 0; t < 2; ++t)
+                params[accumParam(t, NEGATIVE_LIMIT)].setValue(params[trackParam(t, ACCUM_LIMIT)].getValue());
+        }
+        expanded.store(json_is_true(json_object_get(root, "expanded")));
+        modEditor.store(json_is_true(json_object_get(root, "modEditor")));
+        performanceEditor.store(json_is_true(json_object_get(root,"performanceEditor")));
+        selectedLane.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "selectedLane"))), 0, 7));
+        selectedTrack.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "selectedTrack"))), 0, 1));
+        selectedStage.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "selectedStage"))), 0, 7));
+        selectedRow.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "selectedRow"))), 0, 7));
+        selectedAux.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "selectedAux"))),0,2));
+        selectedCtrl.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root,"selectedCtrl"))),0,1));
+        uiPage.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "uiPage"))), 0, static_cast<int>(FACTORY_CONFIRM_PAGE)));
+        if(uiPage.load()==FACTORY_CONFIRM_PAGE)uiPage.store(FACTORY_PAGE);
+        if(uiPage.load()==TUNER_PAGE){uiPage.store(setupDirectChild.load()?SETUP_PAGE:GLOBAL_SETUP_PAGE);if(setupDirectChild.load())setupCursor.store(SetupTuner);else globalCursor.store(5);}
+        uiField.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "uiField"))), 0, uiPage.load()==PRESET_SETUP_PAGE?7:uiPage.load()==ACCUM_PAGE?5:1));
+        uiHome.store(metro::clamp(static_cast<int>(json_integer_value(json_object_get(root, "uiHome"))),0,3));
+        uiStageDetail.store(json_is_true(json_object_get(root,"uiStageDetail")));
+        if((schema<34 && uiPage.load()==SETUP_PAGE) || json_integer_value(json_object_get(root,"uiPage"))==TUNER_PAGE)uiField.store(0);
+        if(json_integer_value(json_object_get(root,"schemaVersion"))<6 && uiPage.load()==LENGTH_PAGE)uiField.store(0);
+        uiMod.store(json_is_true(json_object_get(root, "uiMod")));
+        uiEdit.store(json_is_true(json_object_get(root, "uiEdit")));
+        uiChooseFunction.store(json_is_true(json_object_get(root, "uiChooseFunction")));
+        uiAlt.store(false);
+        if(schema<27){for(int id=MIDI_TRACK;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);for(int t=0;t<2;++t)params[midiTrackParam(t,MIDI_CHANNEL)].setValue(0);for(int l=0;l<8;++l)params[midiModParam(l,MIDI_MOD_CHANNEL)].setValue(0);}
+        if(schema<28)for(int id=MX_MODE;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(schema<32)for(int id=ORDER_SHORTCUTS;id<FORMAT32_NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(schema<33)params[MOD_GROUP_MUTE].setValue(0);
+        if(schema<35)for(int id=MIDI_MX_CHANNEL;id<NUM_PARAMS;++id)params[id].setValue(paramQuantities[id]->defaultValue);
+        if(schema<26){if(integer(LOAD_PITCH)==1)params[LOAD_PITCH].setValue(PitchJump);if(integer(LOAD_CTRL)==2)params[LOAD_CTRL].setValue(CtrlJump);clearPickup();}else pickupFromJson(root);
+        sequencer.reset();
+        readSettings();
+    }
+    void onRemove(const RemoveEvent& e) override {midiPanic();Module::onRemove(e);}
+    ~Metropolix(){midiPanic();}
+};
+
+inline metro::Scale PitchOverrideQuantity::scale() const {
+    auto* m=dynamic_cast<Metropolix*>(module);
+    if(!m)return metro::scaleAt(0);
+    int id=m->integer(Metropolix::SCALE_LOCK);
+    if(id<0)id=m->integer(Metropolix::SCALE);
+    else if(metro::userScale(id)) {
+        int sounding=m->soundingScale[track].load();
+        if(metro::userScale(sounding) && (sounding-49)/10==(id-49)/10)id=sounding;
+    }
+    return metro::userScale(id)?metro::scaleFromMask(unsigned(m->integer(Metropolix::userScaleParam(id-49)))):metro::scaleAt(id);
+}

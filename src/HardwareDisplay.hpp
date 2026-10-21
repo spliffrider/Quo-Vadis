@@ -1,0 +1,535 @@
+#include "OledCanvas.hpp"
+
+struct HardwareDisplay : HardwareControl {
+    bool dismissPreviewGesture=false;double previewDismissedUntil=0;
+    bool dismissPreview() {
+        if(!metroModule || (!metroModule->pitchPreviewActive() && system::getTime()>=previewDismissedUntil))return false;
+        metroModule->clearPitchPreview();previewDismissedUntil=system::getTime()+.4;clearTip();return true;
+    }
+    void onButton(const event::Button& e) override {
+        if(e.action==GLFW_PRESS && dismissPreview()){dismissPreviewGesture=e.button==GLFW_MOUSE_BUTTON_LEFT;e.consume(this);return;}
+        HardwareControl::onButton(e);
+    }
+    void onDragStart(const event::DragStart& e) override {
+        if(e.button==GLFW_MOUSE_BUTTON_LEFT && (dismissPreviewGesture || dismissPreview())){dismissPreviewGesture=true;return;}
+        HardwareControl::onDragStart(e);
+    }
+    void onDragMove(const event::DragMove& e) override {if(!dismissPreviewGesture)HardwareControl::onDragMove(e);}
+    void onDragEnd(const event::DragEnd& e) override {
+        if(dismissPreviewGesture){dismissPreviewGesture=false;return;}
+        HardwareControl::onDragEnd(e);
+    }
+    void onHoverScroll(const event::HoverScroll& e) override {if(dismissPreview()){e.consume(this);return;}HardwareControl::onHoverScroll(e);}
+    void onDoubleClick(const event::DoubleClick& e) override {if(!dismissPreview())HardwareControl::onDoubleClick(e);}
+    std::string tooltipText() override {
+        if(metroModule && metroModule->pitchPreviewActive())return string::f("Stage %d pitch preview\nMove the pitch slider to adjust. Click the display to return to the current editor.\nThis shows the physical slider; preset pickup or stage overrides can make the sounding pitch differ.",metroModule->pitchPreviewStage.load()+1);
+        return HardwareControl::tooltipText();
+    }
+    // Rack can render into its normal and framebuffer NanoVG contexts. Each
+    // needs its own image handle, released before the window context closes.
+    std::map<NVGcontext*,int> displayImages;
+    void clearDisplayImages() {
+        for(auto& entry:displayImages)if(entry.second>0)nvgDeleteImage(entry.first,entry.second);
+        displayImages.clear();
+    }
+    ~HardwareDisplay() { clearDisplayImages(); }
+    void onContextDestroy(const ContextDestroyEvent& e) override {
+        clearDisplayImages();HardwareControl::onContextDestroy(e);
+    }
+    int integer(int id,int fallback=0) const { return metroModule?int(std::round(metroModule->uiValue(id))):fallback; }
+    float value(int id,float fallback=0.f) const { return metroModule?metroModule->uiValue(id):fallback; }
+    bool effectiveSkip(int t,int s) const {
+        bool invert=false;
+        for(int k=0;k<2;++k) {
+            int target=integer(Metropolix::ctrlParam(k,Metropolix::CTRL_ASSIGNMENT),2);
+            if(integer(Metropolix::ctrlParam(k,Metropolix::CTRL_DESTINATION))==metro::CtrlSkipInvert && (target==2 || target==t))
+                invert=value(Metropolix::ctrlParam(k,Metropolix::CTRL_VALUE))>0;
+        }
+        return bool(integer(Metropolix::stageParam(t,s,Metropolix::SKIP)))!=(invert || (metroModule && (metroModule->modSkipMask.load()&(1u<<t))));
+    }
+    bool used(int t,int s) const {
+        int length=integer(Metropolix::trackParam(t,Metropolix::LENGTH),8);
+        int offset=integer(Metropolix::trackParam(t,Metropolix::OFFSET));
+        return metro::modulo(s-offset,8)<length;
+    }
+    std::string functionName() const {
+        if(!metroModule)return "SLIDE";
+        if(metroModule->uiMod.load()) {
+            int d=integer(Metropolix::modParam(metroModule->selectedLane.load(),Metropolix::MOD_DESTINATION));
+            int source=metroModule->selectedLane.load()+2;
+            bool routed=integer(Metropolix::OUTPUT_SOURCE_A)==source || integer(Metropolix::OUTPUT_SOURCE_B)==source;
+            return d?Metropolix::modDestinations()[d]:routed?"OUTPUT":"UNASSIGNED";
+        }
+        const char* names[]={"RATCHET","PROBABILITY","ACCUMULATOR","SLIDE","SKIP","CV","PITCH","GATE"};
+        return names[metroModule->selectedRow.load()];
+    }
+    std::string modValueLabel(const OledCanvas& c,int lane,float volts) const {
+        auto destination=static_cast<metro::ModDestination>(integer(Metropolix::modParam(lane,Metropolix::MOD_DESTINATION)));
+        auto spec=metro::modDisplay(destination);std::string unit=spec.unit;
+        if(unit==" V")unit.clear();
+        else if(unit==" pulses")unit="pl";else if(unit==" stages")unit="stg";else if(unit==" scales")unit="scl";else if(unit==" orders")unit="ord";else if(unit==" ratch")unit="rt";else unit.erase(std::remove(unit.begin(),unit.end(),' '),unit.end());
+        float value=metro::modDisplayValue(volts,destination);if(std::abs(value)<.000001f)value=0;std::string shown;
+        for(int precision=spec.decimals;precision>=0;--precision){char buffer[64];std::snprintf(buffer,sizeof(buffer),"%+.*f%s",precision,double(value),unit.c_str());shown=buffer;if(c.valueWidth(shown)<=37)break;}
+        return shown;
+    }
+    #include "HardwareActionDisplay.hpp"
+    void footer(OledCanvas& c,bool detailed=false) const {
+        auto* m=metroModule;
+        if(pendingConfirmation(m)){c.fill(0,54,128,10,0);c.text(1,56,"? PRESS ENCODER");return;}
+        if(m && m->workflowUntil>system::getTime()){c.fill(0,54,128,10,0);c.text(1,56,m->workflowMessage);return;}
+        if(m && m->workflowStageHeld){c.text(1,56,string::f(m->workflowLaneCopy?"COPY LANE %d":"COPY STAGE %d",m->workflowStageSource+1));return;}
+        if(m && m->heldTrackReset.load() && !workflowTrackIds(m,m->selectedTrack.load()).empty()){c.text(1,56,string::f("COPY TRK %d",m->heldTrackReset.load()&1?1:2));return;}
+        std::string left=m && m->uiMod.load()?string::f("MOD %d",m->selectedLane.load()+1):string::f("TRK %d",m?m->selectedTrack.load()+1:1);
+        if(detailed && m)left+=string::f(":%d",m->selectedStage.load()+1);
+        int page=m?m->uiPage.load():Metropolix::HOME;
+        std::string right=page==Metropolix::ACCUM_PAGE?"ACCUMULATOR":page==Metropolix::CV_TYPE_PAGE && !m->uiMod.load()?"CV":functionName();
+        if(page==Metropolix::LOOPY_PAGE)right=integer(Metropolix::RUN)?"LOOP STAGES":"PLAY STAGES";
+        if(page==Metropolix::LOAD_PAGE)right=integer(Metropolix::LOAD_DELAY)?"PRELOAD PRESET":"LOAD PRESET";
+        if(page==Metropolix::SAVE_PAGE)right="SAVE PRESET";
+        if((overridePage(m) || cvPage(m) || stagePairPage(m) || simpleStagePage(m)) && m->uiAlt.load())right="EDIT ALL / ALT";
+        std::string suffix;
+        if(m && m->uiMod.load()) {
+            int source=m->selectedLane.load()+2;
+            bool a=integer(Metropolix::OUTPUT_SOURCE_A)==source,b=integer(Metropolix::OUTPUT_SOURCE_B)==source;
+            if(a || b)suffix=a?(b?":AB":":A"):":B";
+        }
+        bool wave=m && page!=Metropolix::ACCUM_PAGE && (page!=Metropolix::CV_TYPE_PAGE || m->uiMod.load()) && page!=Metropolix::LOOPY_PAGE && page!=Metropolix::LOAD_PAGE && page!=Metropolix::SAVE_PAGE && right!="EDIT ALL / ALT" &&
+            (m->uiMod.load()?m->effectiveModType(m->selectedLane.load())==metro::ModGate:m->selectedRow.load()==Metropolix::SLIDE || m->selectedRow.load()==Metropolix::SKIP);
+        bool assignment=page==Metropolix::A_PAGE || page==Metropolix::B_PAGE || page==Metropolix::AUX_PAGE || page==Metropolix::CTRL_PAGE || page==Metropolix::MOD_ASSIGN_PAGE;
+        int edge=assignment || (page==Metropolix::HOME && (!m || !m->uiMod.load())) || page==Metropolix::LOOPY_PAGE || (page==Metropolix::SCALE_PAGE && !wave)?126:127;
+        bool compactStageMod=m && page==Metropolix::STAGE_PAGE && m->uiMod.load();
+        if(m && page==Metropolix::STAGE_PAGE && m->uiMod.load() && m->effectiveModType(m->selectedLane.load())!=metro::ModGate)edge=128;
+        // The native Skip indicator reaches the right edge; Slide leaves its
+        // measured margin (manual pp87–88). Other action templates retain it.
+        if(m && page==Metropolix::STAGE_PAGE && !m->uiMod.load() && m->selectedRow.load()==Metropolix::SKIP && wave)edge=129;
+        if(m && page==Metropolix::CV_TYPE_PAGE && !m->uiMod.load())edge=125;
+        bool accumulation=m && page==Metropolix::STAGE_PAGE && !m->uiMod.load() && m->selectedRow.load()==Metropolix::ACCUMULATION && right!="EDIT ALL / ALT";
+        if(m && page==Metropolix::STAGE_PAGE && !m->uiMod.load() && m->selectedRow.load()==Metropolix::PROBABILITY && right!="EDIT ALL / ALT")edge=128;
+        bool curve=compactStageMod && m->effectiveModType(m->selectedLane.load())!=metro::ModGate;
+        actionFooter(c,left,right,wave,edge,suffix,compactStageMod,accumulation,curve);
+    }
+    void pages(OledCanvas& c,int selected) const {
+        for(int i=0;i<4;++i)for(int x=3+i*32;x<28+i*32;++x)if(i==selected || (x-3-i*32)%3==0)c.dot(x,1);
+    }
+    // Native rows use a fifteen-pixel pitch. Shift only bottom-row text when
+    // needed to retain lowercase descenders. File/status pages stay compact.
+    static int listStart(int cursor,int count) { return cursor<4?0:metro::clamp(cursor-1,0,count-4); }
+    static std::string listLabel(const OledCanvas& c,std::string label,const std::string& value,int edge=124,int left=2) {
+        if(left+c.menuWidth(label)+c.menuWidth(value)+3<=edge)return label;
+        if(label=="Slider Octaves:")label="Slider Oct:";
+        else if(label=="Slide Toggle CC:")label="Slide Tog CC:";
+        else if(label=="Slide Amount CC:")label="Slide Amt CC:";
+        else if(label=="Clk/Rset Out:")label="Clock Mode:";
+        else if(label=="Button LED Level:")label="Button LEDs:";
+        else if(label=="Gate Type:")label="Gate:";
+        if(left+c.menuWidth(label)+c.menuWidth(value)+3>edge && !label.empty() && label.back()==':')label.pop_back();
+        return label;
+    }
+    static int listY(int row,bool compact=false) {return compact?12+row*12:10+row*15;}
+    static void listRow(OledCanvas& c,int row,const std::string& name,const std::string& value,bool selected,bool editing,bool compact=false) {
+        int base=listY(row,compact),left=compact?1:2,edge=compact?127:124;
+        // Native right alignment uses advance cells; final t has one less
+        // trailing column than other letters. Compact desktop lists keep theirs.
+        int valueX=compact?edge-c.menuWidth(value):125-c.menuAdvanceWidth(value);std::string label=listLabel(c,name,value,edge,left);
+        int y=std::min(base,64-std::max(c.menuInkHeight(label),c.menuInkHeight(value)));
+        uint8_t labelInk=255,valueInk=255;
+        if(selected){int top=base-(compact?1:3),height=compact?12:15;if(editing){c.fill(valueX-2,top,130-valueX,height);valueInk=0;}else {c.fill(0,top,128,height);labelInk=valueInk=0;}}
+        c.menuText(left,y,label,labelInk);c.menuText(valueX,y,value,valueInk);
+    }
+    std::string trackListValue(int item) const {
+        auto* m=metroModule;if(!m)return {};int id=trackMenuParam(m,item);if(id<0)return {};
+        int v=integer(id);std::string shown;
+        if(item==0)shown=v?string::f("%+d",v):"-";
+        else if(item==1)shown=v?std::to_string(v):"Shared";
+        else if(item==4){const char* names[]={"Switch","Single","Sngl+Rst","Multi","Multi+Rst","Hold","Hold+Rst"};shown=names[metro::clamp(v,0,6)];}
+        else shown=previewDisplayString(m,id);
+        if(m->uiDraftParam==id && shown.find('?')==std::string::npos)shown+=" ?";
+        return shown;
+    }
+    void field(OledCanvas& c,int y,const std::string& name,const std::string& v,bool selected,int w=128,int size=2,int pressOptions=1,int baselineShift=0) const {
+        auto* m=metroModule;
+        c.captionText(2,y==0?3:y==27?31:y+2,name,255,2,name=="MX - EXPANDER");
+        std::string shown=v;if(selected && pendingConfirmation(metroModule) && shown.find('?')==std::string::npos)shown+=" ?";
+        c.valueFit(18,(y?y+22:23)+baselineShift,w-20,shown,size==2);
+        if(selected){
+            bool bpm=m && m->uiPage.load()==Metropolix::BPM_PAGE;
+            int frameY=bpm && y?y-1:y;
+            c.fieldCorners(0,frameY,w,bpm?27:y?27:28);
+            int owner=metroModule?metroModule->ctrlOwner(screenParam(metroModule)):-1;
+            if(owner>=0)c.ownerHint(1,y+14,owner);
+            else {
+                bool output=m && (m->uiPage.load()==Metropolix::A_PAGE || m->uiPage.load()==Metropolix::B_PAGE);
+                bool editingScale=m && m->uiPage.load()==Metropolix::SCALE_PAGE && m->scaleEditing.load();
+                bool queued=m && !editingScale && (output || requiresConfirmation(m,screenParam(m)));
+                bool pending=pendingConfirmation(m) || (output && m->outputDraft[m->uiPage.load()==Metropolix::A_PAGE?0:1].load()>=0);
+                int hintY=frameY+(bpm?17:18);
+                c.turnHint(3,hintY,queued,pending,255,m && m->uiPage.load()==Metropolix::CV_TYPE_PAGE);
+            }
+        }
+        else c.pressHint(3,y+(y==27?17:18),pressOptions);
+    }
+    #include "HardwareHomeDisplay.hpp"
+    #include "HardwareScaleDisplay.hpp"
+    #include "HardwareStageGraphs.hpp"
+    #include "HardwareStageCurves.hpp"
+    #include "HardwareMxDisplay.hpp"
+    void stage(OledCanvas& c) const {
+        auto* m=metroModule;if(!m)return;
+        int t=m->selectedTrack.load(),s=m->selectedStage.load(),l=m->selectedLane.load(),row=m->selectedRow.load();
+        bool mod=m->uiMod.load(),detail=m->uiStageDetail.load();
+        auto id=[&](int stage){return mod?Metropolix::modParam(l,Metropolix::MOD_VALUE+stage):Metropolix::stageParam(t,stage,row);};
+        bool gates=(mod && m->effectiveModType(l)==metro::ModGate) || (!mod && row==Metropolix::CV && cvGate(m));
+        bool binary=(!mod && (row==Metropolix::SLIDE || row==Metropolix::SKIP)) || gates;
+        if(!mod && row>=Metropolix::PITCH_OVERRIDE) {
+            stageOverrideGraph(c,t,s,row);
+        } else if(binary) {
+            const uint16_t circle[]={248,260,514,1025,1025,1025,1025,1025,514,260,248};
+            const uint16_t solid[]={248,508,1022,2047,2047,2047,2047,2047,1022,508,248};
+            const uint16_t cross[]={257,130,68,40,16,40,68,130,257};
+            for(int i=0;i<8;++i) {
+                bool on=value(id(i))>=(gates?1.5f:.5f);
+                if(!mod && row==Metropolix::SKIP && on)c.bitmap(3+i*16,22,9,9,cross);
+                else c.bitmap(2+i*16,21,11,11,on && (mod || row!=Metropolix::SKIP)?solid:circle);
+            }
+        } else if(mod || row==Metropolix::CV) {
+            stageCurveGraph(c,t,s,l,mod,detail);
+        } else {
+            stageValueGraph(c,t,s,row,detail);
+        }
+        int playing=mod?m->modStage[l].load():m->playStage[t].load();
+        if(playing>=0 && integer(Metropolix::SHOW_POSITION,1)) {
+            bool narrow=!mod && row!=Metropolix::SLIDE && row!=Metropolix::SKIP && row!=Metropolix::CV;
+            bool curve=!binary && (mod || row==Metropolix::CV);int x=curve && detail?40+playing*11:narrow?42+playing*11:2+playing*16;c.line(x,53,x+(curve && detail?7:narrow?8:10),53);
+        }
+        if(pendingConfirmation(m))c.text(32,19,"?");
+        footer(c,binary || detail || (!mod && row>=Metropolix::PITCH_OVERRIDE));
+    }
+    #include "HardwarePitchDisplay.hpp"
+    OledCanvas render() const {
+        OledCanvas c;auto* m=metroModule;int page=m?m->uiPage.load():Metropolix::HOME;
+        if(m && m->pitchPreviewActive()){pitchPreview(c);return c;}
+        int t=m?m->selectedTrack.load():0,l=m?m->selectedLane.load():0,f=m?m->uiField.load():0;bool mod=m && m->uiMod.load();
+        auto tm=[&](int tp,int mp){return mod?Metropolix::modParam(l,mp):Metropolix::trackParam(t,tp);};
+        if(m && m->uiChooseFunction.load()) {
+            c.text(1,3,mod?"SELECT MOD LANE":"SELECT EDIT FUNCTION");
+            const char* labels[]={"SLIDE","SKIP","PITCH","GATE","RATCH","PROB","ACCUM","CV"};
+            for(int i=0;i<8;++i){int x=(i%4)*32,y=17+(i/4)*17;c.text(x+2,y,mod?string::f("MOD %d",i+1):labels[i]);c.text(x+2,y+8,std::to_string(i+1));}
+            if(m && m->loopyMuteHeld.load()){c.fill(0,54,128,10,0);c.text(1,56,"MUTE TRK/LANE");return c;}
+        footer(c);return c;
+        }
+        if(page==Metropolix::HOME){home(c);return c;}
+        if(page==Metropolix::STAGE_PAGE){stage(c);return c;}
+        if(page==Metropolix::BPM_PAGE) {
+            bool ext=m && m->externalClock.load(),midi=m && m->integer(Metropolix::CLOCK_SOURCE)==3;
+            field(c,0,midi?"MIDI CLOCK":ext?"EXTERNAL":"INTERNAL",string::f("%.1f",ext?m->displayBpm.load():value(Metropolix::TEMPO,120)),!ext,128,2,0);
+            if(!ext && m && std::abs(m->displayBpm.load()-m->params[Metropolix::TEMPO].getValue())>.05f){c.fill(20,9,107,17,0);c.valueText(19,15,string::f("%.1f",m->displayBpm.load()));std::string base=string::f("%.1f",value(Metropolix::TEMPO,120));if(pendingConfirmation(m))base+=" ?";c.valueFit(56,23,70,base,true);}
+            field(c,28,midi?"CLOCK RESOLUTION":ext?"EXT CLOCK DIV":"TAP TEMPO",midi?"24 PPQN":ext?"/"+std::to_string(integer(Metropolix::EXT_CLOCK_DIV,1)):"Tap BPM",ext && !midi,128,1,0);
+        } else if(page==Metropolix::CLOCK_OUT_PAGE) {
+            field(c,0,"CLK OUT","/"+std::to_string(integer(Metropolix::CLOCK_OUT_DIV,1)),f==0);
+            field(c,28,"CLK OFFSET",std::to_string(metro::ClockOutput::offset(integer(Metropolix::CLOCK_OUT_OFFSET),integer(Metropolix::CLOCK_OUT_DIV,1))),f==1);
+        } else if(page==Metropolix::SCALE_PAGE) {
+            scale(c);
+        } else if(page==Metropolix::ORDER_PAGE) {
+            field(c,0,"PLAY ORDER",Metropolix::orderLabels()[integer(tm(Metropolix::ORDER,Metropolix::MOD_ORDER))],true,128,1);
+            int id=mod?Metropolix::modParam(l,Metropolix::MOD_REVERSED):Metropolix::extraParam(t,Metropolix::REVERSED);
+            field(c,28,"DIRECTION",integer(id)?"Reverse":"Forward",false,128,1,2);
+        } else if(page==Metropolix::LENGTH_PAGE) {
+            bool offset=m && m->uiAlt.load();
+            field(c,0,"STAGES",std::to_string(integer(tm(Metropolix::LENGTH,Metropolix::MOD_LENGTH),8)),f==0 && !offset,74);
+            c.text(82,3,"OFFSET");c.valueRight(126,15,std::to_string(integer(tm(Metropolix::OFFSET,Metropolix::MOD_STAGE_OFFSET))));
+            c.box(81,16,17,7);c.text(83,17,"ALT");if(offset)c.corners(78,0,50,28);
+            int id=mod?Metropolix::modParam(l,Metropolix::MOD_PULSE_LIMIT):Metropolix::extraParam(t,Metropolix::PULSE_LIMIT);
+            int n=integer(id);field(c,28,"PULSES",n?std::to_string(n):"Auto",f==1 && !offset,74,1);
+        } else if(page==Metropolix::DIV_PAGE) {
+            field(c,0,"CLOCK DIV","/"+std::to_string(integer(tm(Metropolix::DIVISION,Metropolix::MOD_DIVISION),1)),f==0);
+            if(!mod)field(c,28,"PULSE COUNT DIV","/"+std::to_string(integer(Metropolix::extraParam(t,Metropolix::PULSE_DIV),1)),f==1);
+        } else if(page==Metropolix::CV_TYPE_PAGE) {
+            const char* types[]={"Bipolar ±","Unipolar +","Gate Toggle"};
+            int type=mod?int(m->effectiveModType(l)):integer(Metropolix::cvTypeParam(t));
+            if(!mod && type==metro::BipolarCv && integer(Metropolix::outputTrackParam(t,Metropolix::VELOCITY_SOURCE))==3)type=metro::UnipolarCv;
+            bool forced=mod && integer(Metropolix::modParam(l,Metropolix::MOD_DESTINATION))!=metro::ModNone;
+            field(c,0,"CV TYPE",types[metro::clamp(type,0,2)],!forced,128,1,0,-1);
+            if(forced){c.text(1,34,"TYPE FROM DEST");c.valueFit(1,52,126,m->getParamQuantity(Metropolix::modParam(l,Metropolix::MOD_DESTINATION))->getDisplayValueString());}
+            if(!mod && m && integer(Metropolix::outputTrackParam(t,Metropolix::VELOCITY_SOURCE))==3)c.text(1,40,"CV = VELOCITY");
+        } else if(page==Metropolix::SLIDE_PAGE) {
+            if(mod){c.text(2,3,"SLIDE");c.text(2,23,"NOTE TRACKS ONLY");}
+            else {
+            field(c,0,"SLIDE AMOUNT",string::f("%.0f",value(Metropolix::trackParam(t,Metropolix::SLIDE_TIME),25)),true);
+            const char* types[]={"Tempo","Analog","Acid"};
+            field(c,28,"SLIDE TYPE",types[metro::clamp(integer(Metropolix::slideTypeParam(t)),0,2)],false,128,1,3);
+            }
+        } else if(page==Metropolix::SWING_PAGE) {
+            if(mod){c.text(2,3,"SWING");c.text(2,23,"NOTE TRACKS ONLY");}
+            else {
+                int owner=m?m->ctrlOwner(Metropolix::swingParam(t)):-1;
+                c.captionText(2,3,"SWING",owner>=0?155:255);
+                std::string shown=string::f("%.0f%%",value(Metropolix::swingParam(t),50));if(pendingConfirmation(m))shown+=" ?";
+                c.valueFit(18,23,108,shown,true);
+                c.fieldCorners(0,0,128,28);
+                if(owner>=0)c.ownerHint(1,14,owner);else c.turnHint(3,18,requiresConfirmation(m,Metropolix::swingParam(t)),pendingConfirmation(m));
+            }
+        } else if(page==Metropolix::GATE_PAGE) {
+            if(mod){c.text(2,3,"GATE");c.text(2,23,"NOTE TRACKS ONLY");}
+            else {
+                float length=value(Metropolix::trackParam(t,Metropolix::GATE_LENGTH),50);
+                field(c,0,"GATE LENGTH",length>=100?"Hold":string::f("%.0f%%",length),f==0);
+                field(c,28,"GATE SCALE",string::f("%.0f%%",value(Metropolix::gateScaleParam(t),100)),f==1);
+            }
+        } else if(page==Metropolix::TRACK_MENU_PAGE) {
+            int cursor=m?m->trackMenuCursor.load():0,start=listStart(cursor,TrackMenuCount);
+            bool compact=m && (m->workflowUntil>system::getTime() || m->heldTrackReset.load());
+            c.captionText(1,2,string::f("TRACK %d SETUP",t+1));
+            for(int row=0;row<4;++row){int item=start+row,id=m?trackMenuParam(m,item):-1;std::string label=trackMenuName(item);if(id>=0)label+=":";listRow(c,row,label,trackListValue(item),item==cursor,f && id>=0,compact);}
+            if(m && m->workflowUntil>system::getTime())c.text(1,59,m->workflowMessage);
+            else if(m && m->heldTrackReset.load())c.text(1,59,string::f("COPY TRK %d MENU",m->heldTrackReset.load()&1?1:2));
+            return c;
+        } else if(page==Metropolix::A_PAGE || page==Metropolix::B_PAGE) {
+            int source=m?shownOutputSource(m):0;auto selection=metro::outputSelection(source);
+            bool pending=m && m->outputDraft[outputIndex(m)].load()>=0;
+            std::string name=metro::outputKindName(selection.kind);if(pending && f==0)name+=" ?";
+            field(c,0,page==Metropolix::A_PAGE?"OUTPUT A":"OUTPUT B",name,f==0,128,1);
+            std::string assignment=metro::outputTargetCount(selection.kind)?string::f(metro::outputIsMod(selection.kind)?"Mod %d":"Trk %d",selection.target+1):"Global";
+            if(metro::outputTargetCount(selection.kind))assignment+=page==Metropolix::A_PAGE?" > Out A":" > Out B";
+            if(pending && f==1)assignment+=" ?";
+            field(c,28,"OUTPUT ASSIGN",assignment,f==1 && metro::outputTargetCount(selection.kind),128,1);
+        } else if(page==Metropolix::AUX_PAGE || page==Metropolix::MOD_ASSIGN_PAGE) {
+            int input=m?m->selectedAux.load():0;
+            bool internal=page==Metropolix::MOD_ASSIGN_PAGE;int lane=m?m->selectedLane.load():0;
+            int dest=integer(internal?Metropolix::modParam(lane,Metropolix::MOD_DESTINATION):Metropolix::auxParam(input,Metropolix::AUX_DESTINATION));
+            int target=integer(internal?Metropolix::modParam(lane,Metropolix::MOD_ASSIGNMENT):Metropolix::auxParam(input,Metropolix::AUX_ASSIGNMENT));
+            float voltage=m?(internal?m->modVoltage[lane].load():m->auxVoltage[input].load()):0.f;
+            field(c,0,internal?string::f("MOD %d PARAM",lane+1):string::f("AUX %c PARAM",'X'+input),Metropolix::modDestinations()[dest],f==0,128,1);
+            if(metro::modGateDestination(static_cast<metro::ModDestination>(dest))) {
+                c.box(116,2,9,7);if(voltage>=1.5f)c.fill(118,4,5,3);
+            } else {
+                c.bipolarGauge(voltage);
+            }
+            bool global=metro::modGlobalDestination(static_cast<metro::ModDestination>(dest));
+            field(c,28,internal?"MOD ASSIGN":"AUX ASSIGN",global?"Global":(internal?string::f("Mod %d > ",lane+1):string::f("CV %c > ",'X'+input))+(target==2?"Trk 1+2":string::f("Trk %d",target+1)),f==1 && !global,128,1);
+        } else if(page==Metropolix::LOOPY_PAGE) {
+            int count=integer(Metropolix::LOOPY_PULSES),both=integer(Metropolix::LOOPY_TARGET);
+            field(c,0,"LOOP PULSES",count?std::to_string(count):"Auto",true,128,2);
+            field(c,28,"LOOP TARGET",both?"1+2":"Current Trk",false,128,1,2);
+            if(m && m->loopyLatched.load()){c.box(1,58,6,5);c.box(2,55,4,5);c.text(11,57,"LATCHED");}
+            else if(m && m->loopyMuteHeld.load())c.text(1,57,"MUTE TRK/LANE");
+            else footer(c);
+            return c;
+        } else if(page==Metropolix::CTRL_PAGE) {
+            int knob=m?m->selectedCtrl.load():0;
+            int dest=integer(Metropolix::ctrlParam(knob,Metropolix::CTRL_DESTINATION));
+            int target=integer(Metropolix::ctrlParam(knob,Metropolix::CTRL_ASSIGNMENT),2);
+            field(c,0,string::f("CTRL %d PARAM",knob+1),Metropolix::ctrlDestinations()[dest],f==0,128,1);
+            c.controlGauge(value(Metropolix::ctrlParam(knob,Metropolix::CTRL_VALUE)));
+            bool global=dest==metro::CtrlTempo || dest==metro::CtrlOutputSwap;
+            field(c,28,"CTRL ASSIGN",global?"Global":string::f("Ctrl %d > ",knob+1)+(target==2?"Trk 1+2":string::f("Trk %d",target+1)),f==1,128,1);
+        } else if(page==Metropolix::ACCUM_PAGE) {
+            const char* labels[]={"Positive Limit","Negative Limit","Mode","Order","Polarity","Reset"};
+            int first=metro::clamp(f,0,5)/3*3;
+            c.captionText(1,2,"LIMITS + SETUP");
+            for(int i=first;i<first+3;++i) {
+                int id=Metropolix::accumScreenParam(t,i),n=integer(id,i<2?9:0);
+                std::string v;
+                if(i<2)v=string::f("%c%d",i?'-':'+',n);
+                else if(i==2)v=n?"Track":"Stage";
+                else if(i==3){const char* orders[]={"Wrap","Pendulum","Random","Hold"};v=orders[metro::clamp(n,0,3)];}
+                else if(i==4)v=n?"Bipolar":"Unipolar";
+                else v=n?"Auto":"Manual";
+                if(m && m->uiDraftParam==id)v+=" ?";
+                int y=10+(i-first)*15;
+                int owner=m?m->ctrlOwner(id):-1;
+                uint8_t ink=owner>=0?155:255;
+                if(i==f){c.fill(0,y-3,128,15,ink);ink=0;}
+                c.menuText(owner>=0?14:2,y,labels[i],ink);c.menuRight(124,y,v,ink);
+                if(owner>=0)c.ownerHint(0,y-2,owner,ink);
+            }
+        } else if(page==Metropolix::LOAD_PAGE || page==Metropolix::SAVE_PAGE) {
+            int bank=m?m->presetBankIndex.load():0;
+            const char* colors[]={"Red","Orange","Yellow","Green","Cyan","Blue","Magenta","Pink"};
+            field(c,0,"PRESET BANK",string::f("%d ",bank+1)+colors[bank],true,128,1);
+            bool save=page==Metropolix::SAVE_PAGE;
+            const char* delays[]={"Instant","Queue Pulses","Total Pulses"};
+            const char* actions[]={"Save + Exit","Save","Clear"};
+            field(c,save?28:27,save?"ACTION":"LOAD DELAY",save?actions[m?m->presetSaveAction.load():0]:delays[integer(Metropolix::LOAD_DELAY)],false,128,1,3);
+            int pending=m?m->pendingSlot.load():-1,notice=m?m->presetNotice.load():0;
+            if(pending>=0)c.text(1,57,string::f("QUEUED %d-%d",pending/8+1,pending%8+1));
+            else if(notice) {
+                const char* messages[]={"","SAVED","CLEARED","EMPTY SLOT","QUEUE CANCELLED","CANCEL QUEUE FIRST","DISABLE CHAIN FIRST"};
+                c.text(1,57,messages[metro::clamp(notice,0,6)]);
+            } else footer(c);
+            return c;
+        } else if(page==Metropolix::PRESET_SETUP_PAGE) {
+            int selected=presetSetupDisplayRow(f),start=metro::clamp(selected-1,0,5);if(selected<4)start=0;c.captionText(1,2,"PRESETS SETUP");
+            for(int row=0;row<4;++row){int item=presetSetupDisplayItem(start+row);if(item<0){c.captionText(1,listY(row)+2,"RACK");continue;}listRow(c,row,std::string(presetSetupName(item))+":",presetSetupValue(m,item),item==f,m && m->presetSetupEditing.load());}
+            return c;
+        } else if(page==Metropolix::CHAIN_PAGE && m) {
+            const char* colors[]={"Red","Orange","Yellow","Green","Cyan","Blue","Magenta","Pink"};
+            auto state=m->getChainState();int n=state.working.size;
+            int cursor=m->chainCursor.load(),playing=m->chainPlayingLink.load(),edit=m->chainEdit.load();
+            if(state.enabled && m->chainFollow.load() && playing>=0)cursor=2*playing+1;
+            auto icon=[&](int x,int y,uint8_t v=255){const uint16_t rows[]={8176,4112,4567,4369,7537,257,511};for(int j=0;j<7;++j)for(int i=0;i<13;++i)if(rows[j]&(1<<(12-i)))c.dot(x+i,y+j,v);};
+            auto plus=[&](int x,int y,uint8_t v=255){c.line(x,y+2,x+4,y+2,v);c.line(x+2,y,x+2,y+4,v);};
+            auto bar=[&](int x,int y,int width){c.fill(x,y-2,width,11);};
+            auto caption=[&](int x,int y,const std::string& text){c.chainText(x,y,text,255,true);};
+            caption(2,1,"#");icon(20,0);caption(73,1,"X");caption(104,1,"MUTE");
+            // An insertion line occupies a row only while it is selected.
+            int selected=cursor/2,first=std::max(0,selected-1);
+            if(cursor>=2*n+1)first=std::max(0,n-2);
+            int y=12;
+            for(int i=first;i<=n && y<=45;++i) {
+                if(cursor==2*i && !state.enabled && !edit) {
+                    if(!n){bar(1,y,127);c.chainText(19,y,"New Chain",0);plus(3,y+1,0);}
+                    else {c.line(1,y+3,127,y+3);c.fill(57,y,9,7,0);plus(59,y+1);}
+                    y+=11;
+                }
+                if(i==n || y>45)break;
+                const auto& link=state.working.links[i];bool active=cursor==2*i+1;
+                if(active)bar(edit==1?18:edit==2?73:1,y,edit==1?54:edit==2?29:127);
+                c.chainText(2,y,std::to_string(i+1),active && !edit?0:255);
+                std::string preset=std::string(colors[link.slot/8])+" "+std::to_string(link.slot%8+1);
+                if(c.chainWidth(preset)>53)preset="Mag "+std::to_string(link.slot%8+1);
+                c.chainText(19,y,preset,active && edit!=2?0:255);
+                c.chainText(73,y,"x"+std::to_string(link.repeats),active && edit!=1?0:255);
+                for(int t=0;t<3;++t){const uint8_t solid[]={14,31,31,31,14},ring[]={14,17,17,17,14};const auto* rows=link.mutes&(1u<<t)?ring:solid;for(int j=0;j<5;++j)for(int k=0;k<5;++k)if(rows[j]&(1<<(4-k)))c.dot(103+9*t+k,y+1+j,active && !edit?0:255);}
+                if(m->chainQuick && i==n-1)plus(96,y+1,active && edit!=1?0:255);
+                if(i==playing && state.enabled && !active)c.fill(0,y+1,1,5);
+                y+=11;
+            }
+            auto action=[&](int position,const char* name){
+                if(y>45)return;
+                bool active=cursor==position;if(active)bar(1,y,127);
+                c.chainText(19,y,name,active?0:255);
+                if(!n)for(int j=y;j<y+9;++j)for(int x=19;x<128;++x)if((x+j)%2==0)c.dot(x,j,0);
+                y+=11;
+            };
+            action(2*n+1,state.enabled?"Disable Chain":"Enable Chain");action(2*n+2,"Clear Chain");
+            if(state.enabled) {
+                if(std::fmod(system::getTime(),.8)<.5)icon(1,56);
+                caption(15,58,playing<0?"-":string::f("%d:%d",playing+1,m->chainPlayingRepeat.load()));
+                caption(43,58,m->chainFollow.load()?"FOLLOWING CHAIN":"CHAIN PLAYBACK");
+            } else {
+                caption(2,58,m->uiMod.load()?string::f("MOD %d",m->selectedLane.load()+1):string::f("TRK %d",m->selectedTrack.load()+1));
+                c.dot(34,60);c.dot(38,60);
+                caption(43,58,m->chainQuick?"ADD TO CHAIN":edit?"EDIT LINK":"SAVE/LOAD CHAIN");
+            }
+            return c;
+        } else if(page==Metropolix::BACKUP_PAGE || page==Metropolix::BACKUP_PRESET_PAGE){
+            bool presets=page==Metropolix::BACKUP_PRESET_PAGE;
+            int cursor=m?(presets?m->backupPresetCursor.load():m->backupCursor.load()):0;
+            int count=presets?BackupPresetCount:BackupCount,start=listStart(cursor,count);
+            c.text(1,1,presets?"PRESET EXPORT":"BACKUP FILES");
+            for(int row=0;row<4 && start+row<count;++row){int item=start+row;listRow(c,row,presets?backupPresetName(item):backupName(item),"",item==cursor,false,true);}
+            c.text(1,59,m && system::getTime()<m->backupNoticeUntil?m->backupNotice:presets?"CLICK TO EXPORT":"JSON BACKUP");return c;
+        } else if(page==Metropolix::FACTORY_PAGE){
+            c.text(1,1,"LAB "+labVersion());int cursor=m?m->factoryCursor.load():0;
+            for(int action=0;action<2;++action)listRow(c,action,factoryName(action),"",action==cursor,false,true);
+            c.text(1,59,m && system::getTime()<m->factoryNoticeUntil?m->factoryNotice:"CONFIRM / UNDO");return c;
+        } else if(page==Metropolix::FACTORY_CONFIRM_PAGE){
+            int action=m?m->factoryCursor.load():0,choice=m?m->factoryConfirmCursor:0;
+            c.text(1,1,action?"CLEAR 64 PRESETS?":"RESET SETTINGS?");
+            c.text(1,14,action?"KEEP LIVE SETTINGS":"KEEP 64 PRESETS");
+            for(int n=0;n<2;++n)listRow(c,n+2,n?"Apply":"Cancel","",n==choice,false,true);return c;
+        } else if(page==Metropolix::MX_SETUP_PAGE){
+            mxScreen(c);return c;
+        } else if(page==Metropolix::SETUP_PAGE){
+            int cursor=m?m->setupCursor.load():0,selected=setupDisplayRow(cursor);
+            int start=metro::clamp(selected-1,0,setupDisplayRow(SetupMenuCount-1)-3);
+            // Keep the first four reference options together at the top.
+            if(cursor<4)start=0;
+            c.captionText(2,1,"SETUP");
+            for(int row=0;row<4;++row){int displayRow=start+row,item=setupDisplayItem(displayRow),y=listY(row);
+                if(item<0){c.captionText(1,y+2,setupCategoryName(displayRow));continue;}
+                int id=m?setupMenuParam(m,item):-1;std::string label=setupMenuName(item);if(id>=0)label+=":";
+                listRow(c,row,label,setupMenuValue(m,id),item==cursor,f && id>=0);
+            }
+            return c;
+        } else if(page==Metropolix::GLOBAL_SETUP_PAGE || page==Metropolix::UI_SETUP_PAGE || page==Metropolix::MIDI_SETUP_PAGE) {
+            bool global=page==Metropolix::GLOBAL_SETUP_PAGE,ui=page==Metropolix::UI_SETUP_PAGE;
+            int cursor=m?(global?m->globalCursor.load():ui?m->uiSetupCursor.load():m->midiSetupCursor.load()):0,count=global?GlobalMenuCount:ui?UiSetupCount:MidiSetupCount,start=listStart(cursor,count);
+            c.captionText(1,2,global?"GLOBAL SETUP":ui?"UI SETUP":"MIDI SETUP");
+            for(int row=0;row<4;++row){int item=start+row,id=m?(global?globalMenuParam(m,item):ui?uiSetupParam(m,item):midiSetupParam(m,item)):-1;std::string label=global?globalMenuName(item):ui?uiSetupName(item):midiSetupName(item);if(id>=0)label+=":";else if(label=="Backup files…")label="Backup Files...";listRow(c,row,label,setupMenuValue(m,id),item==cursor,f && id>=0);}
+            return c;
+        } else if(page==Metropolix::MOD_MENU_PAGE){
+            int cursor=m?m->modMenuCursor.load():0;c.captionText(1,2,string::f("MOD %d SETUP",l+1));
+            for(int item=0;item<4;++item){int id=m?modMenuParam(m,item):-1;std::string label=modMenuName(item);if(id>=0)label+=":";listRow(c,item,label,id>=0?previewDisplayString(m,id):"",item==cursor,f && id>=0);}
+            return c;
+        } else if(page==Metropolix::TUNER_PAGE){
+            field(c,0,"TUNER PITCHES","C"+std::to_string(integer(Metropolix::TUNER_OCTAVE)),true,128,2,0,-1);
+            field(c,28,"TUNER GATES",integer(Metropolix::TUNER_GATE)?"Clock":"High",false,128,1,2);c.text(1,56,"EXIT TO RESUME");return c;
+        }
+        else {c.text(8,13,"NOT IMPLEMENTED");c.text(8,30,"HOVER FOR DETAILS");}
+        if(m && m->loopyMuteHeld.load()){c.fill(0,54,128,10,0);c.text(1,56,"MUTE TRK/LANE");return c;}
+        footer(c);return c;
+    }
+    void draw(const DrawArgs& args) override {
+        auto* vg=args.vg;
+        auto* m=metroModule;float level=value(Metropolix::SCREEN_LEVEL,4)*.25f;
+        rect(vg,0,0,box.size.x,box.size.y,nvgRGB(14,18,18),1.2f);
+        outline(vg,.5f,.5f,box.size.x-1,box.size.y-1,nvgRGB(87,88,81),.8f);
+        nvgSave(vg);nvgTranslate(vg,5,5);nvgIntersectScissor(vg,0,0,box.size.x-10,box.size.y-10);
+        font(vg);
+        if((!m || (m->uiPage.load()==Metropolix::HOME && m->uiHome.load()==0 && !m->uiMod.load())) && (!m || !m->pitchPreviewActive())) {
+            auto white=color::mult(nvgRGB(234,234,222),level);
+            text(vg,1,9,m && m->externalClock.load()?"EXT CLOCK":string::f("%.1f BPM",m?m->displayBpm.load():120.f),12,white);
+            text(vg,169,9,m?previewDisplayString(m,m->scaleRootParam())+" "+previewDisplayString(m,Metropolix::SCALE):"C Major",7,white,NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+            stroke(vg,1,22,169,22,nvgRGB(66,76,75),.6f);
+            for(int t=0;t<2;++t){
+                // Keep both track rows inside the shorter display without shrinking text.
+                float y=36+t*(box.size.y-66);auto tint=color::mult(t?nvgRGB(50,222,170):lampBlue(),level);
+                int stage=m?std::max(0,std::min(7,m->playStage[t].load())):t*3;
+                int pulse=m?m->playPulse[t].load()+1:1;
+                int total=m?m->integer(Metropolix::PULSES+stage):1;
+                float volts=m?m->playPitch[t].load():0;
+                int midi=int(std::round(volts*12))+60;int pc=(midi%12+12)%12;
+                const char* notes[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+                text(vg,1,y,string::f("T%d  %s%d",t+1,notes[pc],int(std::floor(midi/12.f))-1),9,tint);
+                text(vg,169,y,string::f("%d/8   %d/%d",stage+1,pulse,total),8.5f,tint,NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+                for(int s=0;s<8;++s){float x=2+s*21;rect(vg,x,y+10,18,7,color::mult(tint,s==stage?1.f:.2f),.7f);}
+                if(t==0)stroke(vg,1,y+25,169,y+25,nvgRGB(55,65,63),.5f);
+            }
+        } else if(m && m->uiPage.load()==Metropolix::STAGE_PAGE && !m->uiChooseFunction.load() && !m->pitchPreviewActive()) {
+            // An eight-stage graph uses the actual editable values, with a
+            // separate selected-value header and live playback underline.
+            bool mod=m->uiMod.load();int track=m->selectedTrack.load(),lane=m->selectedLane.load(),row=m->selectedRow.load(),selected=m->selectedStage.load();
+            auto tint=color::mult(lampBlue(),level);auto white=color::mult(nvgRGB(229,235,223),level);
+            text(vg,1,7,mod?string::f("MOD %d",lane+1):string::f("T%d  %s",track+1,rowNames[row]),7,white);
+            int selectedId=mod?Metropolix::modParam(lane,Metropolix::MOD_VALUE+selected):Metropolix::stageParam(track,selected,row);
+            std::string label=previewDisplayString(m,selectedId);
+            text(vg,169,7,label,8,tint,NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+            bool binary=mod?m->effectiveModType(lane)==metro::ModGate:(row==Metropolix::SLIDE || row==Metropolix::SKIP || (row==Metropolix::CV && cvGate(m)));
+            int playing=mod?m->modStage[lane].load():m->playStage[track].load();
+            float graphBottom=box.size.y-41,graphHeight=graphBottom-27;
+            for(int s=0;s<8;++s){
+                int id=mod?Metropolix::modParam(lane,Metropolix::MOD_VALUE+s):Metropolix::stageParam(track,s,row);auto* q=m->getParamQuantity(id);
+                float v=m->uiValue(id),normalized=(v-q->minValue)/(q->maxValue-q->minValue),x=2+s*21;
+                normalized=std::max(0.f,std::min(1.f,normalized));
+                rect(vg,x,27,18,graphHeight,nvgRGB(26,38,38),.6f);
+                if(binary){bool on=v>=(mod || row==Metropolix::CV?1.5f:.5f);rect(vg,x+3,27+(graphHeight-12)/2,12,12,color::mult(tint,on?1.f:.15f),1);}
+                else {float height=std::max(1.f,normalized*(graphHeight-2));rect(vg,x+3,graphBottom-1-height,12,height,color::mult(tint,s==selected?1.f:.55f),.5f);}
+                if(s==selected)outline(vg,x-1,25,20,graphHeight+5,tint,.7f);
+                text(vg,x+9,graphBottom+11,std::to_string(s+1),6.5f,white,NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+                if(s==playing && integer(Metropolix::SHOW_POSITION,1))stroke(vg,x+3,graphBottom+18,x+15,graphBottom+18,tint,1.5f);
+            }
+            std::string secondary;
+            if(mod)secondary=integer(Metropolix::modParam(lane,Metropolix::MOD_RAMP+selected))?"Ramp":"Step";
+            else if(row==Metropolix::PROBABILITY)secondary=integer(Metropolix::stageOption(track,selected,Metropolix::PROB_TARGET))?"Per pulse":"Per stage";
+            else if(row==Metropolix::ACCUMULATION){const char* triggers[]={"Stage","Pulse","Ratchet"};secondary=triggers[metro::clamp(integer(Metropolix::stageOption(track,selected,Metropolix::ACCUM_TRIGGER)),0,2)];}
+            else if(row==Metropolix::CV){const char* ramps[]={"Step","Stage ramp","Pulse ramp"};secondary=ramps[metro::clamp(integer(Metropolix::cvRampParam(track,selected)),0,2)];}
+            if(!secondary.empty())text(vg,169,box.size.y-13,secondary+"  /  press to change",5.8f,white,NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+        } else {
+            // Existing page logic supplies labels/values; typography and
+            // highlights are original scalable vector shapes, not OLED art.
+            auto canvas=render();float sx=(box.size.x-10)/128.f,sy=(box.size.y-10)/64.f;
+            nvgScale(vg,sx,sy);
+            for(const auto& run:canvas.textRuns){
+                if(run.value.empty())continue;
+                float size=run.size*.82f;nvgFontSize(vg,size);nvgTextAlign(vg,NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
+                float width=nvgTextBounds(vg,0,0,run.value.c_str(),nullptr,nullptr);
+                if(width>run.width+1 && width>0)size*=std::max(.45f,(run.width+1)/width);
+                NVGcolor c=color::mult(nvgRGB(229,235,223),level);
+                if(!run.ink){rect(vg,run.x-1,run.y-1,std::max(5.f,run.width+2),run.size+1,color::mult(lampBlue(),level),.7f);c=nvgRGB(9,26,28);}
+                text(vg,run.x,run.y,run.value,size,c,NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
+            }
+        }
+        nvgRestore(vg);
+    }
+};
