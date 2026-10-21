@@ -46,7 +46,7 @@ chapters = [
     (20*BAR, 'THE RETURN', 'Bring the\nbass back', 'Low notes return beneath\nthe octave-raised melody.', 'BASS + MELODY / REUNITED'),
     (24*BAR, 'RHYTHM AND EXPRESSION', 'Articulation\nin motion', 'Double-note fills.\nChanging gate lengths.\nBrief slides and rests.', 'RATCHETS / GATES / SLIDE'),
     (28*BAR, 'EIGHT MODULATION LANES', 'Eight lanes.\nAn evolving\nperformance.', 'Pitch, register, rhythm,\nfilter movement and space.', 'BUILT WITH THE MODULE’S MOD LANES'),
-    (32*BAR, 'TRY THE PUBLIC ALPHA', 'Make it\nyour own', 'Plugin and demo patch:\ngithub.com/spliffrider/\nQua-Vadis', 'SENSIBURNER / VCV RACK 2'),
+    (32*BAR, 'TRY THE PUBLIC ALPHA', 'Make it\nyour own', 'Plugin and demo patch:\ngithub.com/spliffrider/\nQuo-Vadis', 'SENSIBURNER / VCV RACK 2'),
 ]
 with wave.open(str(args.capture / 'two-track-demo.wav'), 'rb') as wav:
     assert wav.getframerate() == 48000 and wav.getnchannels() == 2

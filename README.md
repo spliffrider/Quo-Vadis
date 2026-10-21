@@ -1,6 +1,6 @@
 # Quo Vadis¿ for VCV Rack 2
 
-[![Engine tests](https://github.com/spliffrider/Qua-Vadis/actions/workflows/engine-tests.yml/badge.svg)](https://github.com/spliffrider/Qua-Vadis/actions/workflows/engine-tests.yml)
+[![Engine tests](https://github.com/spliffrider/Quo-Vadis/actions/workflows/engine-tests.yml/badge.svg)](https://github.com/spliffrider/Quo-Vadis/actions/workflows/engine-tests.yml)
 
 A two-track sequencer with eight shared stages, eight modulation lanes and an
 optional MX expander. Shape each track with pulse counts, independent timing,
@@ -9,12 +9,11 @@ gates, modulation and MIDI; connect voice modules or open a demo patch to hear i
 
 ![Classic metal panel in Rack](design/previews/2026-10-21/Classic-compact-Rack.png)
 
-This repository and its **2.72.4 Windows preview** remain private. The GitHub
-repository is named **Qua-Vadis**; the plugin and panel name is **Quo Vadis¿**.
+This repository and its **2.72.4 Windows preview** remain private.
 
-[Download 2.72.4](https://github.com/spliffrider/Qua-Vadis/releases/tag/v2.72.4) ·
+[Download 2.72.4](https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.4) ·
 [Panel and controls](docs/QUO-VADIS-UI.md) · [Feature details](docs/FEATURE-STATUS.md) ·
-[Example patches](examples/) · [Report feedback](https://github.com/spliffrider/Qua-Vadis/issues/new?template=test-feedback.md)
+[Example patches](examples/) · [Report feedback](https://github.com/spliffrider/Quo-Vadis/issues/new?template=test-feedback.md)
 
 ## Features
 
@@ -35,7 +34,7 @@ precisely aligned stage columns.
 ## Install the Windows preview
 
 1. Download the Windows `.vcvplugin` from the
-   [private 2.72.4 release](https://github.com/spliffrider/Qua-Vadis/releases/tag/v2.72.4).
+   [private 2.72.4 release](https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.4).
 2. In Rack, choose **Help → Open user folder**, save your patch and close Rack.
 3. Put the intact package in `plugins-win-x64`. **Do not extract it.**
 4. Restart Rack and search for **Quo Vadis¿** or **MX**.

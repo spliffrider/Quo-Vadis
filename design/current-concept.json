@@ -1,7 +1,7 @@
 {
   "updated_date": "2026-10-21",
   "product_name": "Quo Vadis¿",
-  "repository": "https://github.com/spliffrider/Qua-Vadis",
+  "repository": "https://github.com/spliffrider/Quo-Vadis",
   "visibility": "private",
   "version": "2.72.4",
   "status": "Native compact panel implemented and checked in Rack",
@@ -52,7 +52,7 @@
   },
   "validation": "previews/2026-10-21/compact-panel-evidence.json",
   "implementation": "Procedural native artwork with separate interactive Rack widgets. All 31 labelled buttons and 24 stage controls retained.",
-  "naming": "Visible name is Quo Vadis¿. The user-requested repository name is Qua-Vadis. Legacy plugin/model identifiers remain for patch compatibility.",
+  "naming": "Visible name is Quo Vadis¿. The user-requested repository name is Quo-Vadis. Legacy plugin/model identifiers remain for patch compatibility.",
   "history": "Previous design studies and repository history remain in the separate private legacy repository/local branch.",
   "privacy": "Keep private until explicitly requested otherwise."
 }

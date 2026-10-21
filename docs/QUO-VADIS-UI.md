@@ -87,5 +87,5 @@ Validation:
 
 The callback tests do not replace hands-on mouse/keyboard testing or hardware
 comparison. The repository and
-[Windows 2.72.4 release](https://github.com/spliffrider/Qua-Vadis/releases/tag/v2.72.4)
+[Windows 2.72.4 release](https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.4)
 remain private.

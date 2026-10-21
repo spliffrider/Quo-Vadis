@@ -44,11 +44,11 @@
   "widget_report": "compact-panel-qa-report.txt",
   "coordinates": "compact-stage-button-alignment.csv",
   "package": "exports/Quo-Vadis-2.72.4-private-preview-win-x64.vcvplugin",
-  "package_sha256": "84BD98E5710554FAD72A176F1894E8B77738F52CF7E8C2B3F5FD01575872B696",
-  "stripped_binary_sha256": "35F7AEF2808A3E0C8258F18B889B2AF6BBF94827C6AA36C2171A1BC00F8F7857",
+  "package_sha256": "D324CB2EE809F118D71A316687098FD412D7A8D2D1D5C95D86AFE1638EA065C6",
+  "stripped_binary_sha256": "4FD71B1712B0165B2F1ED856BBBE3D38ECEF0224223036D93B477849C989586C",
   "privacy": "Private repository preview; no public release or installation into the normal Rack profile",
   "prior_dsp_validation": "Prior 2.72.1 soak remains recorded separately; no sequencing code changed in this layout update.",
-  "repository": "https://github.com/spliffrider/Qua-Vadis",
-  "release": "https://github.com/spliffrider/Qua-Vadis/releases/tag/v2.72.4",
-  "repackaging": "Repackaged with current Qua-Vadis repository documentation; build reported nothing to be done for all. Source/tests unchanged from the validated compact panel snapshot. New archive and stripped binary hashes recorded after packaging."
+  "repository": "https://github.com/spliffrider/Quo-Vadis",
+  "release": "https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.4",
+  "repackaging": "Repackaged with current Quo-Vadis repository documentation; build reported nothing to be done for all. Source/tests unchanged from the validated compact panel snapshot. New archive and stripped binary hashes recorded after packaging."
 }

@@ -5,7 +5,7 @@ title: "[Feedback] "
 ---
 
 **Feature or workflow**
-See the [current feature overview](https://github.com/spliffrider/Qua-Vadis#features).
+See the [current feature overview](https://github.com/spliffrider/Quo-Vadis#features).
 Is an existing feature behaving unexpectedly, or is this a feature request?
 
 **Environment**

@@ -1,11 +1,11 @@
 # Development
 
-Repository: [spliffrider/Qua-Vadis](https://github.com/spliffrider/Qua-Vadis).
+Repository: [spliffrider/Quo-Vadis](https://github.com/spliffrider/Quo-Vadis).
 It remains private. The visible product name is **Quo Vadis¿**.
 
 The new repository starts from the current 2.72.4 source snapshot; it does not
 import the retired repository's history or release tags. Its default branch is
-`main`. The initial local source branch is `codex/qua-vadis`; use short-lived
+`main`. The initial local source branch is `codex/quo-vadis`; use short-lived
 `codex/` branches for subsequent work.
 
 Preserve parameter and port IDs, plugin/model slugs and backup identifiers.
@@ -64,6 +64,6 @@ retired project retains its design/archive history separately.
 
 `Makefile` explicitly lists packaged documents and font assets. Check package
 contents, stable IDs, production build markers and checksums before uploading a
-Windows preview to the [private releases](https://github.com/spliffrider/Qua-Vadis/releases).
+Windows preview to the [private releases](https://github.com/spliffrider/Quo-Vadis/releases).
 A release or repository upload does not change the proprietary software license
 or authorize a visibility change.
