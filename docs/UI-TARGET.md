@@ -8,20 +8,20 @@ and editing workflows intact while refining the interface.
 ## Panel and layout
 
 - Preserve the 34 HP footprint and all existing controls and connections.
-- Classic metal uses a charcoal upper section, neutral brushed-silver body and
-  footer, satin silver pitch knobs with black pointers, and restrained burgundy
-  and blue-grey printed accents. Atrium remains an optional warm-stone style.
-- Use the title **Quo Vadis¿**, Cinzel lettering and widely spaced laurels.
-  Keep manufacturer logos and author credits off the panel.
+- Use a classic DJ-mixer finish: charcoal over brushed silver by default,
+  with an all-silver alternative. Add fine black rules, small red markers and
+  restrained blue-grey heading strips. Both finishes are free of Roman ornament.
+- Use **Quo Vadis¿** in clear sans-serif lettering. Keep manufacturer logos and
+  author credits off the panel.
 - Keep the eight pitch knobs, pulse faders, gate buttons and lower function
   buttons on the same eight centre lines. Gate and function buttons share exact
   left/right bounds. Native geometry defines alignment.
-- Use Doric pulse surrounds, one cyan lamp beneath each pitch knob, smooth round
-  sockets and light output-label badges. Inputs use plain labels on charcoal.
-- Keep the compact 2.72.4 arrangement: the screen and pulse bank are shorter,
-  the footer starts at y=286, and lower controls fill the former empty band.
-- Give Atrium gate numbers their own clear row above the arches; omit ornament
-  beside VALUE / ENTER. Keep ornament clear of labels and hit targets.
+- Use plain fader slots with printed ticks and black caps with white index lines.
+  Keep satin silver pitch knobs, black pointers and one cyan lamp per stage.
+- Keep smooth round sockets. Outputs have contrasting filled label badges;
+  inputs have plain labels. Reverse the badges on the all-silver plate.
+- Keep the compact arrangement: the screen is 103 units high, pulse controls
+  are 82 units high and the footer starts at y=286.
 
 The [current native renders and dimensions](QUO-VADIS-UI.md) are the visual
 reference. Use actual Rack captures to review changes at 100% and 200% zoom.

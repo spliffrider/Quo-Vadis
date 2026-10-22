@@ -1,9 +1,9 @@
 # Development
 
 Repository: [spliffrider/Quo-Vadis](https://github.com/spliffrider/Quo-Vadis).
-It remains private. The visible product name is **Quo Vadis¿**.
+It is public. The visible product name is **Quo Vadis¿**.
 
-The new repository starts from the current 2.72.4 source snapshot; it does not
+The new repository started from the 2.72.4 source snapshot; it does not
 import the retired repository's history or release tags. Its default branch is
 `main`. The initial local source branch is `codex/quo-vadis`; use short-lived
 `codex/` branches for subsequent work.
@@ -52,7 +52,7 @@ are evidence for the specific commit they test, not automatic certification of
 all platforms or versions.
 
 See [platform coverage](PLATFORMS.md) and [production runtime checks](RUNTIME-VALIDATION.md)
-for existing evidence and limits. The 2.72.4 redesign's current native preview
+for existing evidence and limits. The 2.72.5 redesign's current native preview
 validation is on Windows; human Linux/macOS GUI testing remains open.
 
 ## Repository and release contents
@@ -62,8 +62,8 @@ preview evidence. Keep SDKs, compiler output, profiles, logs, credentials,
 reference photographs, old logo assets and personal media out of Git. The
 retired project retains its design/archive history separately.
 
-`Makefile` explicitly lists packaged documents and font assets. Check package
+`Makefile` explicitly lists packaged documents. Check package
 contents, stable IDs, production build markers and checksums before uploading a
-Windows preview to the [private releases](https://github.com/spliffrider/Quo-Vadis/releases).
+Windows preview to the [releases](https://github.com/spliffrider/Quo-Vadis/releases).
 A release or repository upload does not change the proprietary software license
 or authorize a visibility change.

@@ -4,7 +4,22 @@ Historical notes describe what changed in each listed release. For the current
 implemented features, missing functions and verification limits, use the
 [README](../README.md#feature-status) and [feature status](FEATURE-STATUS.md).
 Earlier milestones are recorded in [development history](DEVELOPMENT.md#imported-milestones).
-Download packages from [GitHub Releases](https://github.com/spliffrider/metropolix-vcv-plugin/releases).
+Download packages from [GitHub Releases](https://github.com/spliffrider/Quo-Vadis/releases).
+
+## 2.72.5 — mixer plates
+
+Replaces all Roman decoration with plain mixer-style graphics: black/silver or
+all-silver plates, sans-serif title, printed fader ticks and black caps with
+white index lines. The former Atrium style ID now selects Brushed silver, so
+existing patches remain loadable. Removes the unused Cinzel package dependency.
+All controls, exact stage alignment, compact geometry and sequencing remain.
+The Quo-Vadis repository is now public at the user's request.
+
+## 2.72.4 — compact panel
+
+Shortens the display and pulse controls and moves the footer upward to remove
+the blank band. Enlarges navigation and transport targets, retaining all eight
+stage centre lines and the 34 HP footprint.
 
 ## 2.72.3 — neutral silver background
 

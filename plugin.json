@@ -1,7 +1,7 @@
 {
   "slug": "MetropolixLab",
   "name": "Quo Vadis¿",
-  "version": "2.72.4",
+  "version": "2.72.5",
   "license": "proprietary",
   "brand": "sensiburner",
   "author": "sensiburner",
@@ -9,7 +9,7 @@
     {
       "slug": "Metropolix",
       "name": "Quo Vadis¿",
-      "description": "Two-track performance sequencer with pulse counts, ratchets, accumulators, eight modulation lanes, and selectable Classic metal or Atrium panels.",
+      "description": "Two-track performance sequencer with pulse counts, ratchets, accumulators, eight modulation lanes, and selectable black/silver or brushed-silver mixer-style panels.",
       "tags": [
         "Sequencer",
         "Clock generator",

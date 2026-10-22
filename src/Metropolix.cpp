@@ -445,7 +445,7 @@ struct TextButton : widget::OpaqueWidget {
     }
 };
 
-void stageButtonCap(NVGcontext* vg,float width,float height,bool stone);
+void stageButtonCap(NVGcontext* vg,float width,float height);
 struct TransportButton : app::Switch {
     bool reset = false;
     TransportButton() { box.size = Vec(16, 16); }
@@ -454,10 +454,9 @@ struct TransportButton : app::Switch {
         if(!reset && module)on=static_cast<Metropolix*>(module)->transportRunning.load();
         float level=module?module->params[Metropolix::BUTTON_LEVEL].getValue()*.25f:1;
         auto* vg=args.vg;float x=box.size.x/2;
-        bool stone=module && static_cast<Metropolix*>(module)->panelStyle.load()==Metropolix::ATRIUM;
-        stageButtonCap(vg,box.size.x,box.size.y,stone);
+        stageButtonCap(vg,box.size.x,box.size.y);
         rect(vg,x-3.2f,4,6.4f,1.8f,on?color::mult(reset?nvgRGB(244,190,110):nvgRGB(24,210,236),level):nvgRGB(58,62,61),.7f);
-        font(vg);text(vg,x,box.size.y-5,reset?"RESET":"RUN",5.2f,stone?paper():nvgRGB(234,240,244),NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+        font(vg);text(vg,x,box.size.y-5,reset?"RESET":"RUN",5.2f,nvgRGB(234,240,244),NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
     }
 };
 
@@ -521,7 +520,7 @@ struct Panel : widget::Widget {
     }
     void step() override {
         art->module=module;
-        int style=module?module->panelStyle.load():Metropolix::CLASSIC_METAL;
+        int style=module?module->panelStyle.load():Metropolix::BLACK_SILVER;
         if(style!=cachedStyle){cachedStyle=style;cache->dirty=true;}
         widget::Widget::step();
     }
@@ -746,9 +745,9 @@ struct MetropolixWidget : ModuleWidget {
         auto* m = getModule<Metropolix>();
         if (!m) return;
         menu->addChild(new ui::MenuSeparator);
-        menu->addChild(createIndexSubmenuItem("Panel style",{"Classic metal","Atrium"},
+        menu->addChild(createIndexSubmenuItem("Panel style",{"Black / silver","Brushed silver"},
             [m]{return size_t(m->panelStyle.load());},
-            [m](size_t style){m->panelStyle.store(style==Metropolix::ATRIUM?Metropolix::ATRIUM:Metropolix::CLASSIC_METAL);}));
+            [m](size_t style){m->panelStyle.store(style==Metropolix::BRUSHED_SILVER?Metropolix::BRUSHED_SILVER:Metropolix::BLACK_SILVER);}));
         menu->addChild(createCheckMenuItem("Desktop performance view","Shift+P",
             [m]{return m->expanded.load() && m->performanceEditor.load();},[m]{if(m->expanded.load() && m->performanceEditor.load())m->expanded.store(false);else m->openDesktopView(2);}));
         appendMidiMenu(menu,m);appendMxMenu(menu,m);appendBackupMenu(menu,m);

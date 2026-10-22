@@ -34,8 +34,6 @@ Thumbs.db
 /design/previews/2026-10-21/*
 !/design/previews/2026-10-21/*compact*
 /res/*
-!/res/Cinzel.ttf
-!/res/Cinzel-OFL.txt
 !/res/README.txt
 /scripts/create-homage-wordmark.py
 /scripts/trace-reference-logo.py

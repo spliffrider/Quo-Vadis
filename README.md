@@ -7,11 +7,11 @@ optional MX expander. Shape each track with pulse counts, independent timing,
 ratchets, probability, accumulators and preset chains. It generates pitch,
 gates, modulation and MIDI; connect voice modules or open a demo patch to hear it.
 
-![Classic metal panel in Rack](design/previews/2026-10-21/Classic-compact-Rack.png)
+![Black and silver panel in Rack](design/previews/2026-10-22/Black-silver-Rack.png)
 
-This repository and its **2.72.4 Windows preview** remain private.
+This repository is public. The **2.72.5 Windows preview** is available below.
 
-[Download 2.72.4](https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.4) ·
+[Download 2.72.5](https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.5) ·
 [Panel and controls](docs/QUO-VADIS-UI.md) · [Feature details](docs/FEATURE-STATUS.md) ·
 [Example patches](examples/) · [Report feedback](https://github.com/spliffrider/Quo-Vadis/issues/new?template=test-feedback.md)
 
@@ -26,15 +26,15 @@ This repository and its **2.72.4 Windows preview** remain private.
 - Internal/external clock, reset, MIDI notes/CC/clock/transport and MIDI control.
 - Mouse/keyboard editing, direct value menus, undo/redo and an optional performance view.
 
-Right-click the module background → **Panel style → Classic metal / Atrium**.
-The choice is saved in the patch. Classic combines brushed silver with charcoal;
-Atrium uses warm stone and Roman ornament. Both share the same controls and
-precisely aligned stage columns.
+Right-click the module background → **Panel style → Black / silver** or
+**Brushed silver**. The choice is saved in the patch. Both use simple mixer-style
+markings, black fader caps and satin silver pitch knobs, with precisely aligned
+stage columns. The former Roman style now opens as Brushed silver.
 
 ## Install the Windows preview
 
 1. Download the Windows `.vcvplugin` from the
-   [private 2.72.4 release](https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.4).
+   [2.72.5 release](https://github.com/spliffrider/Quo-Vadis/releases/tag/v2.72.5).
 2. In Rack, choose **Help → Open user folder**, save your patch and close Rack.
 3. Put the intact package in `plugins-win-x64`. **Do not extract it.**
 4. Restart Rack and search for **Quo Vadis¿** or **MX**.
@@ -63,7 +63,7 @@ Install the patch's other modules, select an audio device in **AUDIO** and enabl
 
 ## Validation and limits
 
-The 2.72.4 layout was built and checked in Windows Rack Free 2.6.6, including
+The 2.72.5 layout was built and checked in Windows Rack Free 2.6.6, including
 stage dragging, button targets, theme switching and patch save/reopen.
 [Current panel evidence](docs/QUO-VADIS-UI.md) records the scope. The latest
 redesign has not yet received equivalent Linux/macOS GUI validation; earlier
@@ -93,5 +93,5 @@ and [current UI requirements](docs/UI-TARGET.md) for build and review details.
 Legacy source/test identifiers and historical regression fixtures remain;
 the new repository does not import the retired repository's Git history.
 
-The software license is **proprietary**. Cinzel is distributed under its
-included SIL Open Font License; see [asset attribution](res/README.txt).
+The software license is **proprietary**. Panel graphics are drawn in code;
+typography uses Rack's bundled font. See [asset notes](res/README.txt).

@@ -314,9 +314,10 @@ struct Metropolix : Module {
     int controlCounter = 0;
     std::atomic<int> selectedTrack{0}, selectedStage{0}, selectedRow{0};
     std::atomic<bool> expanded{false}, externalClock{false};
-    enum PanelStyle { CLASSIC_METAL, ATRIUM };
+    // Preserve saved style IDs: former Classic=0, former Atrium=1.
+    enum PanelStyle { BLACK_SILVER=0, BRUSHED_SILVER=1 };
     // Presentation state belongs to the Rack patch, never a sequencer preset.
-    std::atomic<int> panelStyle{CLASSIC_METAL};
+    std::atomic<int> panelStyle{BLACK_SILVER};
     std::atomic<bool> modEditor{false}, performanceEditor{false};
     void openDesktopView(int view) {
         performanceEditor.store(view==2);modEditor.store(view==1);
@@ -912,7 +913,7 @@ struct Metropolix : Module {
     }
     void dataFromJson(json_t* root) override {
         auto* style=json_object_get(root,"panelStyle");
-        panelStyle.store(json_is_integer(style) && json_integer_value(style)==ATRIUM?ATRIUM:CLASSIC_METAL);
+        panelStyle.store(json_is_integer(style) && json_integer_value(style)==BRUSHED_SILVER?BRUSHED_SILVER:BLACK_SILVER);
         ++uiRestoreSerial;
         resetFromUi.store(false);
         clearPitchPreview();

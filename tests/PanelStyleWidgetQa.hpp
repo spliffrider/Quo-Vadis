@@ -5,11 +5,11 @@ auto chooseStyle=[&](int index){
     for(auto* child:root.children)if(auto* item=dynamic_cast<ui::MenuItem*>(child))if(item->text=="Panel style")selector=item;
     check(selector!=nullptr,"module context menu exposes Panel style");if(!selector)return;
     auto* choices=selector->createChildMenu();check(choices!=nullptr,"Panel style submenu opens");if(!choices)return;
-    int i=0;for(auto* child:choices->children)if(auto* item=dynamic_cast<ui::MenuItem*>(child)){if(i++==index){widget::EventContext context;event::Action action;action.context=&context;item->onAction(action);break;}}
+    int i=0;for(auto* child:choices->children)if(auto* item=dynamic_cast<ui::MenuItem*>(child)){if(i++==index){check(item->text==(index==0?"Black / silver":"Brushed silver"),"panel menu labels identify the two metal finishes");widget::EventContext context;event::Action action;action.context=&context;item->onAction(action);break;}}
     delete choices;
 };
 if(std::getenv("QUO_VADIS_PANEL_REOPEN_QA")) {
-    if(qaFrame==8){check(m->panelStyle.load()==M::ATRIUM,"actual Rack save/reopen restores Atrium");metroqa::screenshot(dir+"/atrium-reopened.png");check(!qaFailed,"PANEL REOPEN QA COMPLETE");APP->window->close();}return;
+    if(qaFrame==8){check(m->panelStyle.load()==M::BRUSHED_SILVER,"actual Rack save/reopen restores Brushed silver");metroqa::screenshot(dir+"/silver-reopened.png");check(!qaFailed,"PANEL REOPEN QA COMPLETE");APP->window->close();}return;
 }
 if(qaFrame==5){
     APP->scene->rackScroll->setZoom(2);
@@ -20,9 +20,10 @@ if(qaFrame==5){
     for(auto* child:children)if(auto* slider=dynamic_cast<HardwareSlider*>(child)) {
         ++count[slider->kind];float centre=slider->box.pos.x+slider->box.size.x/2;
         check(std::abs(centre-stageX(slider->stage))<.01f,"pitch, pulse and gate controls share stage centres");
-        slider->bind();auto* q=slider->getParamQuantity();float base=slider->kind==0?.5f:slider->kind==1?4:1;q->setValue(base);
+        slider->bind();auto* q=slider->getParamQuantity();float original=q->getValue();float base=slider->kind==0?.5f:slider->kind==1?4:1;q->setValue(base);
         drag(slider,-30);check(q->getValue()>base,"upward drag increases each stage control");
         drag(slider,30);check(std::abs(q->getValue()-base)<.001f,"downward drag returns each stage control");
+        q->setValue(original); // Show the demo's varied stages in native captures.
     }
     check(count[0]==8 && count[1]==8 && count[2]==8,"all 24 stage controls remain interactive");
     int buttons=0;for(auto* child:children){if(auto* c=dynamic_cast<HardwareControl*>(child)){if(!c->caption.empty())++buttons;}else if(dynamic_cast<TransportButton*>(child))++buttons;}
@@ -48,18 +49,18 @@ if(qaFrame==5){
         check(gl==fl && gw==fw,"gate/function button left edge, centre and right edge match exactly");
         coordinates<<s+1<<','<<gl<<','<<fl<<','<<gl+gw/2<<','<<fl+fw/2<<','<<gl+gw<<','<<fl+fw<<'\n';
     }
-    chooseStyle(0);check(m->panelStyle.load()==M::CLASSIC_METAL,"Classic menu item changes style");
+    chooseStyle(0);check(m->panelStyle.load()==M::BLACK_SILVER,"Classic menu item changes style");
     m->clearPitchPreview();
 }
 if(qaFrame==9){metroqa::screenshot(dir+"/classic.png");check(metroqa::region(this,Rect(Vec(264,GATE_TOP-28),Vec(235,371-(GATE_TOP-28))),3,dir+"/classic-stage-rows.png"),"exact Classic button rows rendered directly from Rack widgets");check(metroqa::region(this,Rect(Vec(0,0),Vec(510,380)),2,dir+"/classic-whole-panel.png"),"whole Classic panel with narrowed right bank rendered directly");}
-if(qaFrame==10){chooseStyle(1);check(m->panelStyle.load()==M::ATRIUM,"Atrium menu item changes style");}
-if(qaFrame==14){metroqa::screenshot(dir+"/atrium.png");check(metroqa::region(this,Rect(Vec(264,GATE_TOP-28),Vec(235,371-(GATE_TOP-28))),3,dir+"/atrium-stage-rows.png"),"exact Atrium button rows rendered directly from Rack widgets");check(metroqa::region(this,Rect(Vec(0,0),Vec(510,380)),2,dir+"/atrium-whole-panel.png"),"whole Atrium panel with narrowed right bank rendered directly");}
+if(qaFrame==10){chooseStyle(1);check(m->panelStyle.load()==M::BRUSHED_SILVER,"Brushed silver menu item changes style");}
+if(qaFrame==14){metroqa::screenshot(dir+"/silver.png");check(metroqa::region(this,Rect(Vec(264,GATE_TOP-28),Vec(235,371-(GATE_TOP-28))),3,dir+"/silver-stage-rows.png"),"exact Brushed silver button rows rendered directly from Rack widgets");check(metroqa::region(this,Rect(Vec(0,0),Vec(510,380)),2,dir+"/silver-whole-panel.png"),"whole Brushed silver panel with narrowed right bank rendered directly");}
 if(qaFrame==15){click(find("SETUP"));}
 if(qaFrame==19)metroqa::screenshot(dir+"/settings.png");
 if(qaFrame==20){click(find("Stage 6 / PROB"));}
 if(qaFrame==24)metroqa::screenshot(dir+"/stage-graph.png");
 if(qaFrame==25){m->uiPage.store(M::HOME);m->clearPitchPreview();m->uiHome.store(0);APP->scene->rackScroll->setZoom(1);}
-if(qaFrame==29)metroqa::screenshot(dir+"/atrium-100.png");
+if(qaFrame==29)metroqa::screenshot(dir+"/silver-100.png");
 if(qaFrame==30){chooseStyle(0);}
 if(qaFrame==34)metroqa::screenshot(dir+"/classic-100.png");
 if(qaFrame==35){chooseStyle(1);APP->patch->save(dir+"/panel-roundtrip.vcv");}

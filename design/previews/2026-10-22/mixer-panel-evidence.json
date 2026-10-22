@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-22",
+  "version": "2.72.5",
+  "platform": "Windows x64",
+  "rack": "2.6.6",
+  "rendering": "Actual Rack widget tree, native 100% and 200% captures; no image editing",
+  "panel": {
+    "command": "scripts/test-panel-styles.ps1",
+    "result": "PASS",
+    "assertions": 112,
+    "scope": [
+      "24 stage controls dragged up/down",
+      "31 labelled pushbuttons counted, not all clicked",
+      "Exact paired gate/function edges and centres",
+      "Control bounds within panel and non-overlapping",
+      "Both named style menu entries selected",
+      "Brushed silver patch saved/reopened"
+    ]
+  },
+  "integration": {
+    "command": "scripts/test-rack.ps1",
+    "result": "PASS",
+    "scope": "Full Rack integration suite, including both style IDs, old ID 1, missing/invalid style and musical preset independence"
+  },
+  "production": {
+    "command": "scripts/test-production.ps1",
+    "result": "PASS",
+    "metrics": {
+      "frames": "22624609",
+      "outputChecks": "339369135",
+      "parameterEdits": "56808",
+      "stateRestores": "145",
+      "freshInstances": "144",
+      "initializes": "12",
+      "reciprocalLinks": "145",
+      "virtualSeconds": "361.083",
+      "seed": "0x4d455452",
+      "wallSeconds": "16.7832"
+    }
+  },
+  "package": {
+    "command": "scripts/build.ps1 -Package; scripts/audit-package.py",
+    "result": "PASS",
+    "sha256": "312865840d2870ad5cf7562bf14a19ac44a540c13b1b19c3fcd480aad4462656",
+    "binarySha256": "5d4c56766e2bf209742ffa9096d388955e4b70bdc2207b2d56a7d180251f3b07",
+    "unused_font_absent": true
+  },
+  "source_sha256": {
+    "src/QuoVadisPanel.hpp": "f9fcd0e6c8c9f4ae95c58c545eb8b43a0f8a6492623d32adf9859ef7ed1754de",
+    "src/QuoVadisArt.hpp": "9c56bb24d3a8a7b4be389ca7c82f51a40777cdd6fb442fdb305869658567eb8d",
+    "src/QuoVadisMaterials.hpp": "28315111fa4982510465c957a00dfaacef4720a052e789f828b67794a7a62cc1",
+    "src/HardwareUI.hpp": "9238ea413e3ccaba38f36fca2f55c331466cc00ae399499d672724f130c6b9d9",
+    "src/HardwareLayout.hpp": "62a65a2936d112b3877234cd535751e1cdb6c00d2b75f92342712a05e591191d",
+    "src/HardwareDisplay.hpp": "ae5e4d53bc84e90a82cafb08e13991a49ee6dd7ec87edcc8d6a56494b855804d",
+    "src/Metropolix.hpp": "d104ed23542e7881db2b0670c25b23acad6287aff3e02c7336c07dbdd4c8d943",
+    "src/Metropolix.cpp": "38d2e710e00d82aa5015ab71ea3a5abf2f7c7e2534b1a09fa5ea587d6d1e5349",
+    "tests/PanelStyleWidgetQa.hpp": "d90c6d5b7baa364c589e6e7d6c16df78472d03ca331c414e208730b0daf68d6b",
+    "tests/PanelStyleRackTests.hpp": "f8a51e81e6f228603ffbd722b9b471d5e38e65f05924227b04df31383f8b3a7c",
+    "plugin.json": "5c08b93a304c18ddcbc60d6fc42519767966c7d3fca9e39a65eaef7aae3d28f0",
+    "Makefile": "7fc609bb2373ab05951441ba5c91dd756603fe906b10f10e2b6fe8b9126bb424"
+  },
+  "limits": [
+    "Windows native validation only for this redesign",
+    "Linux performance-keyboard QA failure from 2.72.4 not addressed by this visual change",
+    "Physical MIDI controller not tested",
+    "Not installed in the normal Rack profile"
+  ]
+}

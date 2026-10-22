@@ -16,20 +16,20 @@ void metalDisc(NVGcontext* vg, float x, float y, float r, NVGcolor top, NVGcolor
     nvgBeginPath(vg); nvgCircle(vg, x, y, r);
     nvgFillPaint(vg, nvgLinearGradient(vg, x-r, y-r, x+r, y+r, top, bottom)); nvgFill(vg);
 }
-void socketDrawing(NVGcontext* vg, float x, float y,bool stone=false) {
+void socketDrawing(NVGcontext* vg, float x, float y) {
     disc(vg,x+.5f,y+1,11.9f,nvgRGBA(0,0,0,60));
     // Concentric circular surfaces give the washer and bore a smooth silhouette.
     // Continuous shading avoids the old polygon nut and segmented reflections.
     metalDisc(vg,x,y,11.5f,nvgRGB(230,232,226),nvgRGB(100,105,103));
     metalDisc(vg,x,y,10.5f,nvgRGB(123,129,126),nvgRGB(224,226,218));
-    metalDisc(vg,x,y,9.6f,stone?nvgRGB(250,250,239):nvgRGB(241,247,251),stone?nvgRGB(151,157,151):nvgRGB(151,162,171));
+    metalDisc(vg,x,y,9.6f,nvgRGB(241,243,241),nvgRGB(151,158,160));
     disc(vg,x,y,8.1f,nvgRGB(51,56,53));
-    metalDisc(vg,x,y,7.5f,stone?nvgRGB(110,119,113):nvgRGB(110,122,132),stone?nvgRGB(223,226,213):nvgRGB(223,233,240));
+    metalDisc(vg,x,y,7.5f,nvgRGB(110,121,126),nvgRGB(223,232,233));
     disc(vg,x,y,6.35f,nvgRGB(7,10,9));
 }
 struct MetalPort : app::PortWidget {
     MetalPort() { box.size=Vec(24,24); }
-    void draw(const DrawArgs& args) override { auto* m=dynamic_cast<Metropolix*>(module);socketDrawing(args.vg,12,12,m && m->panelStyle.load()==Metropolix::ATRIUM); }
+    void draw(const DrawArgs& args) override { socketDrawing(args.vg,12,12); }
 };
 
 #include "QuoVadisArt.hpp"
@@ -484,22 +484,21 @@ struct HardwareControl : ValueKnob {
     void draw(const DrawArgs& args) override {
         auto* vg=args.vg;float x=box.size.x/2,y=box.size.y/2,r=std::min(x,y)-.7f;
         if(look==INVISIBLE)return;
-        bool stone=atrium(metroModule);
-        if(look==SOCKET){socketDrawing(vg,x,y,stone);return;}
+        if(look==SOCKET){socketDrawing(vg,x,y);return;}
         if(look==BUTTON || look==DARK_BUTTON || look==BLUE_BUTTON || look==CREAM_BUTTON) {
-            stageButtonCap(vg,box.size.x,box.size.y,stone);
+            stageButtonCap(vg,box.size.x,box.size.y);
             bool on=active && active(),dim=dimActive && dimActive();
             float level=metroModule?metroModule->params[Metropolix::BUTTON_LEVEL].getValue()*.25f:1;
             NVGcolor light=activeColor?activeColor():lampBlue();
             rect(vg,x-3.2f,stageNumber?y-1:4,6.4f,1.8f,on?color::mult(light,level):dim?color::mult(light,.3f*level):nvgRGB(58,62,61),.7f);
             font(vg);
-            auto label=stone?paper():nvgRGB(234,240,244);
+            auto label=nvgRGB(234,240,244);
             if(stageNumber)text(vg,x,11,std::to_string(stageNumber),6.5f,label,NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
             if(!caption.empty())text(vg,x,box.size.y-5,caption,caption.size()>6?4.6f:5.2f,label,NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
             return;
         }
         auto* q=getParamQuantity();
-        satinKnob(vg,x,y,r,q?q->getScaledValue():.5f,look==WHITE_KNOB,look==ENCODER,stone);
+        satinKnob(vg,x,y,r,q?q->getScaledValue():.5f,look==WHITE_KNOB,look==ENCODER);
     }
 };
 
@@ -540,7 +539,9 @@ struct HardwareSlider : HardwareControl {
         auto* vg=args.vg;auto* q=getParamQuantity();float x=box.size.x/2;
         font(vg);
         if(kind==PITCH_SLIDER){
-            satinKnob(vg,x,14,13,q?q->getScaledValue():.5f,true,false,atrium(metroModule));
+            satinKnob(vg,x,14,13,q?q->getScaledValue():.5f,true,false);
+            // Paint the unlit lens in the base layer, below Rack's emissive light.
+            disc(vg,x,box.size.y-2,2,nvgRGB(15,23,26));
             if(metroModule && metroModule->waitingPickup(Metropolix::PITCH+stage)){
                 float a=(-.83f+1.66f*metroModule->panelValue(Metropolix::PITCH+stage))*M_PI;
                 disc(vg,x+std::sin(a)*14.3f,14-std::cos(a)*14.3f,.8f,lampBlue());
@@ -549,7 +550,8 @@ struct HardwareSlider : HardwareControl {
         }
         if(kind==GATE_SWITCH){
             int mode=q?int(std::round(q->getValue())):1;
-            stageButtonCap(vg,box.size.x,box.size.y,atrium(metroModule));
+            stageButtonCap(vg,box.size.x,box.size.y);
+            disc(vg,x,4,2,nvgRGB(15,23,26));
             gateGlyph(vg,x,14,mode);
             const char* names[]={"REST","SINGLE","MULTI","HOLD"};
             text(vg,x,box.size.y+7,names[std::max(0,std::min(3,mode))],5.5f,ink(),NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
@@ -557,13 +559,12 @@ struct HardwareSlider : HardwareControl {
         }
         float h=box.size.y,cy=handleCenter();
         rect(vg,x-2.1f,7,4.2f,h-14,nvgRGB(8,11,11),.8f);
-        rect(vg,x-5,cy-6.5f,10,13,nvgRGB(44,44,40),1);
-        if(atrium(metroModule))rect(vg,x-4.3f,cy-5.8f,8.6f,11.3f,nvgRGB(210,207,192),1);
-        else {
-            nvgBeginPath(vg);nvgRoundedRect(vg,x-4.3f,cy-5.8f,8.6f,11.3f,1);
-            nvgFillPaint(vg,nvgLinearGradient(vg,x,cy-5.8f,x,cy+5.5f,nvgRGB(222,229,234),nvgRGB(160,173,184)));nvgFill(vg);
-        }
-        stroke(vg,x-3.6f,cy-4.9f,x+3.6f,cy-4.9f,atrium(metroModule)?nvgRGB(248,246,229):nvgRGB(247,251,254),.6f);
+        // Wide, low black mixer cap; its white index marks the exact value.
+        rect(vg,x-8,cy-4,16,10,nvgRGBA(0,0,0,60),.7f);
+        rect(vg,x-8,cy-5,16,10,nvgRGB(17,20,22),.7f);
+        nvgBeginPath(vg);nvgRoundedRect(vg,x-7.5f,cy-4.5f,15,9,.5f);
+        nvgFillPaint(vg,nvgLinearGradient(vg,x,cy-4.5f,x,cy+4.5f,nvgRGB(59,63,65),nvgRGB(21,24,26)));nvgFill(vg);
+        stroke(vg,x-6.5f,cy,x+6.5f,cy,nvgRGB(230,233,230),1.1f);
         text(vg,x,h+7,q?std::to_string(int(std::round(q->getValue()))):"1",6.5f,ink(),NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
     }
 };
